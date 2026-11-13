@@ -103,6 +103,14 @@ La app abre la vista del rol principal: **Mi jornada** (especialista / jefe de b
 - La unidad de cálculo es brigada × estación con las unidades de los métodos de su especialidad; los registros abiertos no cuentan para el avance.
 - `scripts/demo-avance.sh` carga un avance de ejemplo para ver el tablero con datos; `scripts/demo-avance.sh --limpiar` lo quita y deja todo como estaba.
 
+## Consultas (web · Fase 2)
+
+**Web → Consultas** (coordinador, supervisor, jefe de proyecto). Lista todos los registros de campo sincronizados (una fila por unidad ejecutada), del más reciente al más antiguo, de 50 en 50.
+
+- **Filtros**: especialidad, método, estación, brigada, especialista, estado y rango de fechas (hora de Lima). Solo aparecen valores que tienen registros. Los filtros quedan en la URL: se pueden compartir y se conservan al volver de una ficha.
+- **Búsqueda**: código de unidad, especialista, observaciones o cualquier valor anotado en el formulario (p. ej. el nombre de una especie).
+- **Ficha de la unidad**: especialista, brigada, horas de inicio y fin, fecha programada (avisa si se ejecutó en otra fecha), coordenadas UTM de la estación y del punto de inicio con la distancia entre ambos (avisa si pasa de 1 km), observaciones, tabla con los registros del formulario, fotos por orientación con su UTM y enlace al original en alta resolución, notas de voz y alertas de la unidad. Los archivos que siguen en el teléfono se indican como pendientes.
+
 ## Instalar la app en un teléfono Android
 
 La app usa módulos nativos (cámara, audio, Skia para el sello), así que no funciona en Expo Go. Con el teléfono conectado por USB y la depuración USB activa (en Xiaomi también "Instalar vía USB"):
@@ -170,6 +178,7 @@ scripts/smoke-basemap.sh # mapa base OSM: estilo, teselas, límites de zona
 scripts/smoke-incidents.sh # alertas: registro, respuesta, conversación y reprogramación (deja todo como estaba)
 scripts/smoke-field.sh   # registro de campo: ejecuciones, fotos, audios y subida a MinIO (deja todo como estaba)
 scripts/smoke-tracking.sh # avance de brigadas: indicadores, desviación, curva y permisos (usa y quita el avance de ejemplo)
+scripts/smoke-records.sh # consultas: filtros, búsqueda por especie, ficha con formulario, fotos y permisos (solo lee)
 scripts/smoke-supervision-logistics.sh # supervisor y logístico: incidencias con solución, alertas de brigada, movilidad, apoyos, viáticos, muestras, equipos
 pnpm typecheck
 ```

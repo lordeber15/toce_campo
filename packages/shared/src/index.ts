@@ -9,3 +9,4 @@ export * from './areas.js';
 export * from './incidents.js';
 export * from './logistics.js';
 export * from './tracking.js';
+export * from './records.js';

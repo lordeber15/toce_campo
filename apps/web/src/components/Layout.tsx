@@ -12,6 +12,7 @@ const NAV: { title?: string; items: Item[] }[] = [
     title: 'Seguimiento',
     items: [
       { to: '/seguimiento', label: 'Avance de brigadas', roles: VIEWERS },
+      { to: '/consultas', label: 'Consultas', roles: VIEWERS },
       { to: '/alertas', label: 'Alertas', roles: VIEWERS },
       { to: '/logistica', label: 'Logística', roles: VIEWERS },
     ],

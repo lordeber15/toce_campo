@@ -17,6 +17,7 @@ import { AlertsPage } from './pages/Alerts';
 import { LogisticsPage } from './pages/Logistics';
 import { TrackingPage } from './pages/Tracking';
 import { BrigadeTrackingPage } from './pages/BrigadeTracking';
+import { RecordDetailPage, RecordsPage } from './pages/Records';
 
 export function App() {
   const { user, loading, can } = useAuth();
@@ -45,6 +46,8 @@ export function App() {
               <Route path="especies" element={<SpeciesPage />} />
               <Route path="seguimiento" element={<TrackingPage />} />
               <Route path="seguimiento/:id" element={<BrigadeTrackingPage />} />
+              <Route path="consultas" element={<RecordsPage />} />
+              <Route path="consultas/:id" element={<RecordDetailPage />} />
               <Route path="alertas" element={<AlertsPage />} />
               <Route path="logistica" element={<LogisticsPage />} />
             </>
