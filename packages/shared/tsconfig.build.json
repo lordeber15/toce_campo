@@ -1,0 +1,6 @@
+{
+  // Compila @toce/shared a JS para la imagen Docker de la API (web y móvil usan el código fuente).
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "noEmit": false, "outDir": "dist", "declaration": false, "sourceMap": false },
+  "include": ["src"]
+}

@@ -9,3 +9,4 @@ coverage/
 apps/mobile/android/
 apps/mobile/ios/
 docker/data/
+packages/shared/dist
