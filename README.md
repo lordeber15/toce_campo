@@ -140,6 +140,7 @@ CREATE EXTENSION IF NOT EXISTS postgis;
 
 1. `cp .env.vps.example .env` y reemplazar todos los `<...>` (contraseñas y secretos nuevos, dominios).
 2. `docker compose up -d --build`, luego migraciones: `docker compose exec api node dist/db/migrate.js`.
+   Primer acceso (catálogo de especialidades y métodos + coordinador inicial; no borra nada): `docker compose exec api node dist/db/setup.js <DNI> "<Nombre>" <contraseña>`. No usar `db:seed` en producción: borra todo y crea usuarios de prueba.
 3. En Nginx Proxy Manager crear los tres proxy hosts (web, API, archivos) hacia la IP del servidor con los puertos 4710/4711/4712, con SSL.
 
 Los puertos se cambian en `.env` (`WEB_HOST_PORT`, `API_HOST_PORT`, `MINIO_HOST_PORT`, `MINIO_CONSOLE_HOST_PORT`). En local se siguen usando 5433 / 9000 / 9001 / 4000.
