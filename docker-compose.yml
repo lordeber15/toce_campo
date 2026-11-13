@@ -44,6 +44,7 @@ services:
       - "127.0.0.1:${MINIO_CONSOLE_HOST_PORT:-4713}:9001"
     volumes:
       - minio_data:/data
+    networks: [default, proxy]
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 5s
@@ -68,6 +69,7 @@ services:
     # Permite llegar a una base que corre en el mismo VPS (fuera de este compose) como host.docker.internal.
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks: [default, proxy]
     depends_on:
       postgres:
         condition: service_healthy
@@ -86,8 +88,16 @@ services:
     profiles: ["full"]
     ports:
       - "${WEB_HOST_PORT:-4710}:80"
+    networks: [default, proxy]
     depends_on:
       - api
+
+# Red del proxy (Nginx Proxy Manager) para llegar a toce-web, toce-api y toce-minio por nombre.
+# En el VPS: PROXY_NETWORK=nginx_default. En local se crea sola si no existe (toce_proxy).
+networks:
+  proxy:
+    name: ${PROXY_NETWORK:-toce_proxy}
+    external: ${PROXY_NETWORK_EXTERNAL:-false}
 
 volumes:
   postgres_data:
