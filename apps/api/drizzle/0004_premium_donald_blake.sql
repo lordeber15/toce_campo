@@ -1,0 +1,1 @@
+ALTER TABLE "incidents" ADD COLUMN "field_corrective_action" text;

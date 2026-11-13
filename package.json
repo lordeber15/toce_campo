@@ -1,0 +1,14 @@
+{
+  "name": "toce",
+  "private": true,
+  "packageManager": "pnpm@12.18.0",
+  "scripts": {
+    "dev:api": "pnpm --filter @toce/api dev",
+    "dev:web": "pnpm --filter @toce/web dev",
+    "dev:mobile": "pnpm --filter @toce/mobile start",
+    "db:generate": "pnpm --filter @toce/api db:generate",
+    "db:migrate": "pnpm --filter @toce/api db:migrate",
+    "db:seed": "pnpm --filter @toce/api db:seed",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
