@@ -1,6 +1,6 @@
 import type { AuthResponse, AuthUser } from '@toce/shared';
 
-const API = (import.meta.env.VITE_API_URL ?? 'http://localhost:4000') + '/api';
+const API = (import.meta.env.VITE_API_URL ?? 'http://localhost:4000').replace(/\/+$/, '') + '/api';
 const RT_KEY = 'toce.rt';
 
 let accessToken: string | null = null;
