@@ -116,6 +116,24 @@ adb install -r app/build/outputs/apk/release/app-release.apk
 
 La versión *release* trae el código incluido y abre sin computadora ni internet. La versión de desarrollo (`npx expo run:android`) carga el código desde Metro: sin el cable/Metro se queda cargando. La URL del API sale de `apps/mobile/.env` (`EXPO_PUBLIC_API_URL`, IP de la computadora en la red Wi-Fi). Mientras el servidor de pruebas sea `http://`, el plugin `plugins/withCleartextHttp.js` permite HTTP sin cifrar; en producción el API irá por HTTPS y se quita.
 
+## Despliegue en el VPS (puertos)
+
+TOCE usa el bloque **4710–4714**, que no choca con las aplicaciones que ya corren en el VPS (8080, 3000, 5432, 8085, etc.):
+
+| Puerto | Servicio | Exposición |
+|---|---|---|
+| 4710 | Web (panel) | proxy → `https://toce.<dominio>` |
+| 4711 | API | proxy → `https://api.toce.<dominio>` (la app móvil apunta aquí) |
+| 4712 | MinIO (archivos) | proxy → `https://files.toce.<dominio>` |
+| 4713 | Consola MinIO | solo `127.0.0.1` (túnel SSH) |
+| 4714 | Postgres | solo `127.0.0.1` (túnel SSH) |
+
+1. `cp .env.vps.example .env` y reemplazar todos los `<...>` (contraseñas y secretos nuevos, dominios).
+2. `docker compose --profile full up -d --build`, luego migraciones: `docker compose exec api node dist/db/migrate.js`.
+3. En Nginx Proxy Manager crear los tres proxy hosts (web, API, archivos) hacia la IP del servidor con los puertos 4710/4711/4712, con SSL.
+
+Los puertos se cambian en `.env` (`WEB_HOST_PORT`, `API_HOST_PORT`, `MINIO_HOST_PORT`, `MINIO_CONSOLE_HOST_PORT`, `POSTGRES_HOST_PORT`). En local se siguen usando 5433 / 9000 / 9001 / 4000.
+
 ## Archivos (MinIO)
 
 MinIO dejó de publicar imágenes oficiales; se usa `pgsty/minio` (build comunitario del mismo código fuente) con versión fijada en `docker-compose.yml`. Consola: http://localhost:9001.
