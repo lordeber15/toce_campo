@@ -127,7 +127,7 @@ TOCE usa el bloque **4710–4714**, que no choca con las aplicaciones que ya cor
 | 4712 | MinIO (archivos) | proxy → `https://files.toce.<dominio>` |
 | 4713 | Consola MinIO | solo `127.0.0.1` (túnel SSH) |
 
-En el VPS **no se levanta otro Postgres**: la API usa la base existente (`API_DATABASE_URL`). En local el perfil `db` sí levanta uno propio (`COMPOSE_PROFILES=db`, Postgres en 5433).
+En el VPS **no se levanta otro Postgres**: la API usa la base existente (`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`). En local el perfil `db` sí levanta uno propio con esas mismas variables (`COMPOSE_PROFILES=db`, Postgres en 5433).
 
 **Usar la base de datos existente** (una sola vez, como superusuario de ese Postgres). TOCE necesita **PostGIS**, que la imagen `postgres:17` no trae: cambiar la imagen de ese contenedor a `postgis/postgis:17-3.5` (mismo Postgres 17, los datos se conservan; hacer respaldo antes) o instalar el paquete `postgresql-17-postgis-3` en él. Luego:
 

@@ -1,9 +1,9 @@
 # Perfiles (COMPOSE_PROFILES en .env):
 #   db   → levanta su propio Postgres+PostGIS (desarrollo local). En el VPS se omite y la API usa la base
-#          existente indicada en API_DATABASE_URL.
+#          existente indicada en DB_HOST / DB_PORT / DB_USER / DB_PASSWORD / DB_NAME.
 #   full → API y web en contenedores (VPS).
 # Puertos del host (configurables en .env): web 4710 · API 4711 · MinIO 4712 · consola MinIO 4713 (127.0.0.1)
-# · Postgres propio 4714 (127.0.0.1). No chocan con las demás aplicaciones del VPS.
+# · Postgres propio en DB_PORT (127.0.0.1, solo perfil db). No chocan con las demás aplicaciones del VPS.
 services:
   postgres:
     image: postgis/postgis:16-3.4
@@ -11,16 +11,17 @@ services:
     restart: unless-stopped
     profiles: ["db"]
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-toce}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
-      POSTGRES_DB: ${POSTGRES_DB:-toce}
+      # Se crea con las mismas variables que usa la API.
+      POSTGRES_USER: ${DB_USER:-toce}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-}
+      POSTGRES_DB: ${DB_NAME:-toce}
       TZ: ${TZ}
     ports:
-      - "127.0.0.1:${POSTGRES_HOST_PORT:-4714}:5432"
+      - "127.0.0.1:${DB_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-toce} -d ${POSTGRES_DB:-toce}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-toce} -d ${DB_NAME:-toce}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -56,8 +57,7 @@ services:
     profiles: ["full"]
     env_file: .env
     environment:
-      # Base existente (VPS) o la del perfil "db".
-      DATABASE_URL: ${API_DATABASE_URL:-postgres://${POSTGRES_USER:-toce}:${POSTGRES_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-toce}}
+      # La base se toma de DB_* del .env (en el VPS, DB_HOST=host.docker.internal).
       MINIO_ENDPOINT: minio
       MINIO_PORT: "9000"
       API_PORT: "4000"
