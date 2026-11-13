@@ -36,6 +36,8 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # Sin esto, un navegador que abre la raíz se redirige a la consola (:9001), que no es pública.
+      MINIO_BROWSER_REDIRECT: "off"
       TZ: ${TZ}
     ports:
       - "${MINIO_HOST_PORT:-4712}:9000"
