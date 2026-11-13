@@ -126,13 +126,23 @@ TOCE usa el bloque **4710–4714**, que no choca con las aplicaciones que ya cor
 | 4711 | API | proxy → `https://api.toce.<dominio>` (la app móvil apunta aquí) |
 | 4712 | MinIO (archivos) | proxy → `https://files.toce.<dominio>` |
 | 4713 | Consola MinIO | solo `127.0.0.1` (túnel SSH) |
-| 4714 | Postgres | solo `127.0.0.1` (túnel SSH) |
+
+En el VPS **no se levanta otro Postgres**: la API usa la base existente (`API_DATABASE_URL`). En local el perfil `db` sí levanta uno propio (`COMPOSE_PROFILES=db`, Postgres en 5433).
+
+**Usar la base de datos existente** (una sola vez, como superusuario de ese Postgres). TOCE necesita **PostGIS**, que la imagen `postgres:17` no trae: cambiar la imagen de ese contenedor a `postgis/postgis:17-3.5` (mismo Postgres 17, los datos se conservan; hacer respaldo antes) o instalar el paquete `postgresql-17-postgis-3` en él. Luego:
+
+```sql
+CREATE USER toce WITH PASSWORD '<contraseña larga>';
+CREATE DATABASE toce OWNER toce;
+\c toce
+CREATE EXTENSION IF NOT EXISTS postgis;
+```
 
 1. `cp .env.vps.example .env` y reemplazar todos los `<...>` (contraseñas y secretos nuevos, dominios).
-2. `docker compose --profile full up -d --build`, luego migraciones: `docker compose exec api node dist/db/migrate.js`.
+2. `docker compose up -d --build`, luego migraciones: `docker compose exec api node dist/db/migrate.js`.
 3. En Nginx Proxy Manager crear los tres proxy hosts (web, API, archivos) hacia la IP del servidor con los puertos 4710/4711/4712, con SSL.
 
-Los puertos se cambian en `.env` (`WEB_HOST_PORT`, `API_HOST_PORT`, `MINIO_HOST_PORT`, `MINIO_CONSOLE_HOST_PORT`, `POSTGRES_HOST_PORT`). En local se siguen usando 5433 / 9000 / 9001 / 4000.
+Los puertos se cambian en `.env` (`WEB_HOST_PORT`, `API_HOST_PORT`, `MINIO_HOST_PORT`, `MINIO_CONSOLE_HOST_PORT`). En local se siguen usando 5433 / 9000 / 9001 / 4000.
 
 ## Archivos (MinIO)
 

@@ -1,22 +1,26 @@
-# Puertos del host (configurables en .env). Por defecto usan el bloque 4710–4714 para no chocar con
-# otras aplicaciones del VPS. Postgres y la consola de MinIO solo escuchan en 127.0.0.1 (usar túnel SSH).
-#   web 4710 · API 4711 · MinIO S3 4712 · consola MinIO 4713 (local) · Postgres 4714 (local)
+# Perfiles (COMPOSE_PROFILES en .env):
+#   db   → levanta su propio Postgres+PostGIS (desarrollo local). En el VPS se omite y la API usa la base
+#          existente indicada en API_DATABASE_URL.
+#   full → API y web en contenedores (VPS).
+# Puertos del host (configurables en .env): web 4710 · API 4711 · MinIO 4712 · consola MinIO 4713 (127.0.0.1)
+# · Postgres propio 4714 (127.0.0.1). No chocan con las demás aplicaciones del VPS.
 services:
   postgres:
     image: postgis/postgis:16-3.4
     container_name: toce-postgres
     restart: unless-stopped
+    profiles: ["db"]
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER:-toce}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_DB: ${POSTGRES_DB:-toce}
       TZ: ${TZ}
     ports:
       - "127.0.0.1:${POSTGRES_HOST_PORT:-4714}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-toce} -d ${POSTGRES_DB:-toce}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -52,15 +56,20 @@ services:
     profiles: ["full"]
     env_file: .env
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      # Base existente (VPS) o la del perfil "db".
+      DATABASE_URL: ${API_DATABASE_URL:-postgres://${POSTGRES_USER:-toce}:${POSTGRES_PASSWORD:-}@postgres:5432/${POSTGRES_DB:-toce}}
       MINIO_ENDPOINT: minio
       MINIO_PORT: "9000"
       API_PORT: "4000"
     ports:
       - "${API_HOST_PORT:-4711}:4000"
+    # Permite llegar a una base que corre en el mismo VPS (fuera de este compose) como host.docker.internal.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
+        required: false
       minio:
         condition: service_healthy
 
