@@ -5,11 +5,12 @@ import { z } from 'zod';
 import {
   ADMIN_ROLES, INCIDENT_DECISION_LABELS, INCIDENT_STATUSES, INCIDENT_TYPES, WEB_ROLES, hasAnyRole,
   incidentDecisionSchema, incidentMessageSchema, incidentSyncSchema, rescheduleSchema,
-  type BrigadeIncidentDto, type IncidentMessageDto, type MyIncidentDto,
+  RESCHEDULE_APPROVER_ROLES, type BrigadeIncidentDto, type IncidentMessageDto, type MyIncidentDto,
 } from '@toce/shared';
 import { db } from '../db/index.js';
 import { audit } from '../lib/audit.js';
 import { HttpError, badRequest, conflict, idParam, notFound, projectParam } from '../lib/http.js';
+import { createReschedule } from '../lib/reschedules.js';
 
 /** ¿Participa el usuario en la brigada (jefe, miembro, supervisor o logístico)? */
 async function inBrigade(userId: string, brigadeId: string) {
@@ -48,13 +49,13 @@ const messagesOf = async (incidentIds: string[]) => {
 };
 
 const reschedulesOf = async (incidentIds: string[]) => {
-  if (!incidentIds.length) return [] as { incidentId: string; fromDate: string; toDate: string; reason: string; approvedByName: string | null }[];
+  if (!incidentIds.length) return [] as { incidentId: string; fromDate: string; toDate: string; reason: string; status: string; approvedByName: string | null }[];
   return (await db.execute(sql`
     SELECT r.incident_id AS "incidentId", to_char(r.from_date AT TIME ZONE 'America/Lima', 'YYYY-MM-DD') AS "fromDate",
-      to_char(r.to_date AT TIME ZONE 'America/Lima', 'YYYY-MM-DD') AS "toDate", r.reason, u.full_name AS "approvedByName"
+      to_char(r.to_date AT TIME ZONE 'America/Lima', 'YYYY-MM-DD') AS "toDate", r.reason, r.status, u.full_name AS "approvedByName"
     FROM reschedules r LEFT JOIN users u ON u.id = r.approved_by_id
     WHERE r.incident_id IN (${sql.join(incidentIds.map((i) => sql`${i}`), sql`, `)}) ORDER BY r.created_at`)).rows as {
-    incidentId: string; fromDate: string; toDate: string; reason: string; approvedByName: string | null;
+    incidentId: string; fromDate: string; toDate: string; reason: string; status: string; approvedByName: string | null;
   }[];
 };
 
@@ -341,47 +342,18 @@ const incidentRoutes: FastifyPluginAsync = async (app) => {
     return { ok: true };
   });
 
-  r.post('/incidents/:id/reschedule', { onRequest: write, schema: { params: idParam, body: rescheduleSchema } }, async (req) => {
+  r.post('/incidents/:id/reschedule', { onRequest: write, schema: { params: idParam, body: rescheduleSchema } }, async (req, reply) => {
     const b = req.body;
-    return db.transaction(async (tx) => {
+    // Coordinación aprueba en el acto; el supervisor deja la propuesta para aprobación.
+    const approve = hasAnyRole(req.user.roles, [...RESCHEDULE_APPROVER_ROLES]);
+    const out = await db.transaction(async (tx) => {
       const inc = (await tx.execute(sql`SELECT id, project_id AS "projectId", reported_by_id AS "by" FROM incidents WHERE id = ${req.params.id}`)).rows[0] as
         | { id: string; projectId: string; by: string }
         | undefined;
       if (!inc) throw notFound('Alerta');
-      const sc = (await tx.execute(sql`
-        SELECT sc.id, to_char(sc.planned_date, 'YYYY-MM-DD') AS "plannedDate", sc.station_id AS "stationId", b.project_id AS "projectId",
-          b.specialty_id AS "specialtyId", sc.status
-        FROM schedules sc JOIN brigades b ON b.id = sc.brigade_id WHERE sc.id = ${b.scheduleId} FOR UPDATE OF sc`)).rows[0] as
-        | { id: string; plannedDate: string; stationId: string; projectId: string; specialtyId: string | null; status: string }
-        | undefined;
-      if (!sc || sc.projectId !== inc.projectId) throw badRequest('La programación no es del proyecto de la alerta');
-      if (sc.status === 'cancelada') throw conflict('La programación está cancelada');
-      if (sc.plannedDate === b.newDate) throw badRequest('La nueva fecha es igual a la programada');
-
-      await tx.execute(sql`UPDATE schedules SET planned_date = ${b.newDate}::date, status = 'planificada', updated_at = now() WHERE id = ${sc.id}`);
-      await tx.execute(sql`
-        INSERT INTO reschedules (schedule_id, incident_id, from_date, to_date, reason, status, proposed_by_id, approved_by_id, approved_at)
-        VALUES (${sc.id}, ${inc.id}, ${`${sc.plannedDate}T12:00:00-05:00`}, ${`${b.newDate}T12:00:00-05:00`}, ${b.reason}, 'aprobada', ${inc.by}, ${req.user.sub}, now())`);
-      let reopened = 0;
-      if (b.reopenUnits) {
-        // Unidades "no realizadas" de la estación (de la especialidad de la brigada) vuelven a pendiente.
-        const res = await tx.execute(sql`
-          UPDATE sampling_units su SET status = 'pendiente', updated_at = now()
-          FROM methods m WHERE m.id = su.method_id AND su.station_id = ${sc.stationId} AND su.status = 'no_realizada'
-            ${sc.specialtyId ? sql`AND m.specialty_id = ${sc.specialtyId}` : sql``}
-          RETURNING su.id`);
-        reopened = res.rows.length;
-      }
-      const fmt = (d: string) => d.split('-').reverse().join('/');
-      await tx.execute(sql`
-        INSERT INTO incident_messages (client_id, incident_id, author_id, body, kind, sent_at)
-        VALUES (gen_random_uuid(), ${inc.id}, ${req.user.sub},
-          ${`Reprogramado del ${fmt(sc.plannedDate)} al ${fmt(b.newDate)}. ${b.reason}${reopened ? ` (${reopened} unidad${reopened > 1 ? 'es' : ''} vuelve${reopened > 1 ? 'n' : ''} a pendiente)` : ''}`},
-          'decision', now())`);
-      await tx.execute(sql`UPDATE incidents SET updated_at = now() WHERE id = ${inc.id}`);
-      await audit(req, 'schedule', sc.id, 'reschedule', { before: { plannedDate: sc.plannedDate }, after: { plannedDate: b.newDate, incidentId: inc.id, reopened } }, tx);
-      return { ok: true, fromDate: sc.plannedDate, toDate: b.newDate, reopened };
+      return createReschedule(tx, req, inc.projectId, { ...b, incidentId: inc.id, justification: null, approve }, { proposedById: inc.by });
     });
+    return reply.code(approve ? 200 : 201).send({ ok: true, ...out });
   });
 };
 

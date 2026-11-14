@@ -142,7 +142,7 @@ export type MyIncidentDto = {
   resolvedByName: string | null;
   updatedAt: string;
   messages: IncidentMessageDto[];
-  reschedules: { fromDate: string; toDate: string; reason: string; approvedByName: string | null }[];
+  reschedules: { fromDate: string; toDate: string; reason: string; status: string; approvedByName: string | null }[];
 };
 
 /** Alerta de una brigada que supervisa el usuario (registrada por otra persona). Se guarda en el teléfono. */

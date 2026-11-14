@@ -93,6 +93,12 @@ export default function StationScreen() {
               </Pill>
             ))}
           </View>
+          {visits.filter((v) => v.lastReschedule).map((v) => (
+            <View key={`r-${v.id}`} style={s.moved} accessibilityRole="text">
+              <Text style={s.movedTitle}>Reprogramada: {shortDate(v.lastReschedule!.fromDate)} → {shortDate(v.plannedDate)}</Text>
+              <Text style={s.small}>{v.lastReschedule!.reason}</Text>
+            </View>
+          ))}
           {brigade.members
             .slice()
             .sort((a, b) => Number(b.id === brigade.leaderId) - Number(a.id === brigade.leaderId))
@@ -199,6 +205,8 @@ const s = StyleSheet.create({
   rowLabel: { color: colors.text2 },
   rowValue: { color: colors.text, fontWeight: '600', flexShrink: 1, textAlign: 'right' },
   visits: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  moved: { backgroundColor: '#FFF4E0', borderRadius: 10, padding: 10, gap: 2 },
+  movedTitle: { color: colors.warn, fontWeight: '700' },
   member: { flexDirection: 'row', justifyContent: 'space-between', paddingTop: 10, borderTopWidth: 1, borderTopColor: colors.border },
   memberName: { color: colors.text },
   phone: { color: colors.primary, fontWeight: '600' },

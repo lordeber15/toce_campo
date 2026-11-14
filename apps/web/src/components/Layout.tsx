@@ -14,6 +14,7 @@ const NAV: { title?: string; items: Item[] }[] = [
       { to: '/seguimiento', label: 'Avance de brigadas', roles: VIEWERS },
       { to: '/alertas', label: 'Alertas', roles: VIEWERS },
       { to: '/consultas', label: 'Consultas', roles: VIEWERS },
+      { to: '/reprogramaciones', label: 'Reprogramaciones', roles: VIEWERS },
       { to: '/logistica', label: 'Logística', roles: VIEWERS },
     ],
   },

@@ -112,7 +112,12 @@ export async function computeTracking(projectId: string, opts: { today?: string;
       (i.status IN ('abierta', 'en_revision') AND NOT EXISTS (SELECT 1 FROM reschedules r WHERE r.incident_id = i.id)
         AND (i.proposed_action ILIKE '%reprogram%' OR EXISTS (
           SELECT 1 FROM sampling_units su WHERE su.id = i.sampling_unit_id AND su.status = 'no_realizada'))) AS "needsReschedule"
-    FROM incidents i WHERE i.project_id = ${projectId}`)).rows as { brigadeId: string | null; stationId: string | null; active: boolean; needsReschedule: boolean }[];
+    FROM incidents i WHERE i.project_id = ${projectId}
+    UNION ALL
+    -- Propuestas de reprogramación esperando aprobación.
+    SELECT sc.brigade_id, sc.station_id, false, true
+    FROM reschedules r JOIN schedules sc ON sc.id = r.schedule_id
+    WHERE sc.project_id = ${projectId} AND r.status = 'propuesta'`)).rows as { brigadeId: string | null; stationId: string | null; active: boolean; needsReschedule: boolean }[];
 
   const memberRows = (await db.execute(sql`
     SELECT x.brigade_id AS "brigadeId", u.id, u.full_name AS "fullName", sp.code AS "specialtyCode", x.role, u.phone,

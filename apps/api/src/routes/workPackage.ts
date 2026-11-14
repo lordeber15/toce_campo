@@ -104,7 +104,10 @@ const workPackageRoutes: FastifyPluginAsync = async (app) => {
       const schedules: WpSchedule[] = brigadeIds.length
         ? ((await db.execute(sql`
             SELECT sc.id, sc.brigade_id AS "brigadeId", sc.station_id AS "stationId",
-              to_char(sc.planned_date, 'YYYY-MM-DD') AS "plannedDate", sc.sort_order AS "sortOrder", sc.status, sc.notes
+              to_char(sc.planned_date, 'YYYY-MM-DD') AS "plannedDate", sc.sort_order AS "sortOrder", sc.status, sc.notes,
+              to_char(sc.original_date, 'YYYY-MM-DD') AS "originalDate",
+              (SELECT json_build_object('fromDate', to_char(r.from_date AT TIME ZONE 'America/Lima', 'YYYY-MM-DD'), 'reason', r.reason)
+                FROM reschedules r WHERE r.schedule_id = sc.id AND r.status = 'aprobada' ORDER BY r.approved_at DESC LIMIT 1) AS "lastReschedule"
             FROM schedules sc JOIN stations s ON s.id = sc.station_id AND s.deleted_at IS NULL
             WHERE sc.brigade_id IN (${list(brigadeIds)}) AND sc.status <> 'cancelada'
               AND sc.planned_date BETWEEN ${days.from}::date AND ${days.to}::date

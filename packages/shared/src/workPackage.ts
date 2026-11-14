@@ -59,6 +59,10 @@ export type WpSchedule = {
   sortOrder: number;
   status: string;
   notes: string | null;
+  /** Fecha del cronograma original (paquetes antiguos no lo traen). */
+  originalDate?: string;
+  /** Último cambio de fecha aprobado. */
+  lastReschedule?: { fromDate: string; reason: string } | null;
 };
 
 export type WpStation = {

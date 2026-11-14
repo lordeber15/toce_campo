@@ -93,6 +93,9 @@ export function StationCard({ item, pos, showBrigade, onPress }: { item: Station
         {!!station.vegetationUnit && <Pill>{station.vegetationUnit}</Pill>}
         {showBrigade && <Pill>{item.brigadeName}</Pill>}
         {status && <Pill fg={colors.warn} bg="#FFF4E0">{status}</Pill>}
+        {!!item.schedule.lastReschedule && (
+          <Pill fg={colors.warn} bg="#FFF4E0">Reprogramada · antes {item.schedule.lastReschedule.fromDate.split('-').reverse().slice(0, 2).join('/')}</Pill>
+        )}
       </View>
       <View style={s.methods}>
         {methods.length ? methods.map((m) => <MethodLine key={m.stationMethod.id} m={m} />) : (

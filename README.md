@@ -136,6 +136,34 @@ La app abre la vista del rol principal: **Mi jornada** (especialista / jefe de b
   - **Cerrar y reabrir**: si una respuesta enviada sin señal llega después del cierre, se guarda y la consulta sigue cerrada.
 - **Historial**: la bandeja se filtra por estado y brigada, y busca en asunto, persona, estación y texto de los mensajes. Crear, cerrar y reabrir quedan en la auditoría.
 
+## Reprogramaciones (web + móvil · Fase 2)
+
+**Web → Reprogramaciones**:
+
+- **Quién hace qué**: el supervisor **propone**; el coordinador y el jefe de proyecto **aprueban o rechazan**. También pueden registrar y aprobar en un solo paso. Desde una alerta funciona igual: si la reprograma el supervisor, queda por aprobar.
+- **Alertas que piden reprogramar**: las alertas que proponen reprogramar o que tienen unidades no realizadas aparecen arriba, con un botón para empezar el trámite.
+- **Propuesta**: visita (brigada, estación y fecha), nueva fecha, motivo, sustento, alerta vinculada y evidencias (fotos, PDF, audio, Excel o Word). Cada visita admite una sola propuesta pendiente.
+- **Aprobación**: se puede ajustar la fecha y decidir si las unidades no realizadas vuelven a pendiente. El cronograma se actualiza en el acto y la brigada lo recibe al sincronizar.
+  - En el teléfono, la tarjeta de la estación muestra "Reprogramada · antes dd/mm" y el detalle muestra el motivo.
+- **Rechazo**: exige sustento y no cambia el cronograma.
+- **Lo que se conserva**: fecha original del cronograma, fecha anterior, fecha nueva, motivo, sustento, evidencias, quién propuso, quién decidió y cuándo.
+  - Además, el historial de todas las reprogramaciones de la visita y el registro de cambios (auditoría).
+  - Si la reprogramación tiene una alerta vinculada, cada paso queda anotado en su conversación.
+- Las propuestas pendientes se suman a "Reprogramaciones pendientes" en Avance de brigadas.
+
+## Estado y pendientes
+
+**Hecho:** Fase 1 (operación de campo) y Fase 2 (supervisión web: avance, alertas, consultas, reprogramaciones, reportes y Excel).
+
+**Pendiente, en este orden:**
+1. Desplegar en el VPS (migraciones 0005 y 0006) e instalar el APK nuevo.
+2. Sección 6: repositorio unificado de documentos y evidencias.
+3. Catálogo de especies (falta el Excel).
+4. Menores: actualizar PostGIS, refactorizar los avisos de lint del móvil, respuestas con foto en consultas desde el teléfono.
+
+**Después (Fase 3, postergada por decisión del 2026-11-14):** transcripción de audios y extracción de información,
+clasificación de observaciones y validación con IA, cálculos estadísticos y gráficos, y reportes Word.
+
 ## Instalar la app en un teléfono Android
 
 La app usa módulos nativos (cámara, audio, Skia para el sello), así que no funciona en Expo Go. Con el teléfono conectado por USB y la depuración USB activa (en Xiaomi también "Instalar vía USB"):
@@ -206,6 +234,7 @@ scripts/smoke-tracking.sh # avance de brigadas: indicadores, desviación, curva 
 scripts/smoke-records.sh # registros de campo: filtros, búsqueda por especie, ficha con formulario, fotos y permisos (solo lee)
 scripts/smoke-reports.sh # reportes: diario, Excel diario/consolidado/registros, ZIP de evidencias y tickets (usa y quita el avance de ejemplo)
 scripts/smoke-inquiries.sh # consultas: app, respuesta sin duplicar, llamadas registradas, adjuntos, cierre y permisos (borra lo que crea)
+scripts/smoke-reschedules.sh # reprogramaciones: propuesta, evidencia, aprobación con ajuste, rechazo, historial, tablero, paquete y permisos (borra lo que crea)
 scripts/smoke-supervision-logistics.sh # supervisor y logístico: incidencias con solución, alertas de brigada, movilidad, apoyos, viáticos, muestras, equipos
 pnpm typecheck
 ```

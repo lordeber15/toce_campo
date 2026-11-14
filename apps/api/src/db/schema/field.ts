@@ -1,6 +1,7 @@
 import {
   pgTable, text, uuid, integer, timestamp, jsonb, index, uniqueIndex, pgEnum, boolean, bigint, doublePrecision,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { id, createdAt, updatedAt, pointGeom } from './_common.js';
 import { users } from './core.js';
 import { brigades, methods, projects, samplingUnits, schedules, stations } from './project.js';
@@ -57,6 +58,7 @@ export const attachmentOwnerEnum = pgEnum('attachment_owner', [
   'inquiry_message',
   'logistics',
   'station',
+  'reschedule',
 ]);
 export const uploadStatusEnum = pgEnum('upload_status', ['pendiente', 'subido', 'error']);
 
@@ -204,13 +206,21 @@ export const reschedules = pgTable(
     reason: text('reason').notNull(),
     justification: text('justification'),
     status: rescheduleStatusEnum('status').notNull().default('propuesta'),
+    /** Al aprobar, las unidades "no realizadas" vuelven a pendiente. */
+    reopenUnits: boolean('reopen_units').notNull().default(true),
     proposedById: uuid('proposed_by_id').references(() => users.id),
+    /** Quien aprobó o rechazó, y cuándo. */
     approvedById: uuid('approved_by_id').references(() => users.id),
     approvedAt: timestamp('approved_at', { withTimezone: true }),
+    decisionNotes: text('decision_notes'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index('reschedules_schedule_idx').on(t.scheduleId)],
+  (t) => [
+    index('reschedules_schedule_idx').on(t.scheduleId),
+    // Una sola propuesta pendiente por visita.
+    uniqueIndex('reschedules_one_pending_idx').on(t.scheduleId).where(sql`status = 'propuesta'`),
+  ],
 );
 
 export const inquiryStatusEnum = pgEnum('inquiry_status', ['abierta', 'respondida', 'cerrada']);

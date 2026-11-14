@@ -15,6 +15,7 @@ import { MethodsPage } from './pages/Methods';
 import { SpeciesPage } from './pages/Species';
 import { AlertsPage } from './pages/Alerts';
 import { InquiriesPage } from './pages/Inquiries';
+import { ReschedulesPage } from './pages/Reschedules';
 import { LogisticsPage } from './pages/Logistics';
 import { TrackingPage } from './pages/Tracking';
 import { BrigadeTrackingPage } from './pages/BrigadeTracking';
@@ -53,6 +54,7 @@ export function App() {
               <Route path="reportes" element={<ReportsPage />} />
               <Route path="alertas" element={<AlertsPage />} />
               <Route path="consultas" element={<InquiriesPage />} />
+              <Route path="reprogramaciones" element={<ReschedulesPage />} />
               <Route path="logistica" element={<LogisticsPage />} />
             </>
           )}

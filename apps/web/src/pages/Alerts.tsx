@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router';
 import {
   ADMIN_ROLES, INCIDENT_DECISION_LABELS, INCIDENT_MOMENT_LABELS, INCIDENT_ORIGIN_LABELS, INCIDENT_STATUS_LABELS, INCIDENT_STATUSES,
-  INCIDENT_TYPE_LABELS, INCIDENT_TYPES,
+  INCIDENT_TYPE_LABELS, INCIDENT_TYPES, RESCHEDULE_APPROVER_ROLES,
   type IncidentDecision, type IncidentMessageKind, type IncidentMoment, type IncidentOrigin, type IncidentStatus, type IncidentType,
 } from '@toce/shared';
 import { api } from '../lib/api';
@@ -22,7 +23,7 @@ type Detail = Row & {
   methodologicalDeviation: string | null; fieldCorrectiveAction: string | null; resolutionNotes: string | null; lat: number | null; lng: number | null; coordinationResponse: string | null; correctiveAction: string | null;
   resolvedAt: string | null; resolvedByName: string | null; reportedById: string; reporterPhone: string | null; stationId: string | null;
   influenceArea: string | null; vegetationUnit: string | null; methodName: string | null; unitStatus: string | null; scheduleId: string | null;
-  messages: Message[]; files: FileRow[]; reschedules: { fromDate: string; toDate: string; reason: string; approvedByName: string | null }[];
+  messages: Message[]; files: FileRow[]; reschedules: { fromDate: string; toDate: string; reason: string; status: string; approvedByName: string | null }[];
   schedules: { id: string; plannedDate: string; status: string; brigadeName: string }[];
 };
 
@@ -193,8 +194,14 @@ function AlertDetail({ id }: { id: string }) {
           <div>
             <div className="section-title">Reprogramaciones</div>
             {d.reschedules.map((r, i) => (
-              <p key={i} style={{ margin: '4px 0' }}>{fmtDate(r.fromDate)} → <strong>{fmtDate(r.toDate)}</strong> · {r.reason}{r.approvedByName ? ` (aprobó ${r.approvedByName})` : ''}</p>
+              <p key={i} style={{ margin: '4px 0' }}>
+                {fmtDate(r.fromDate)} → <strong>{fmtDate(r.toDate)}</strong> · {r.reason}
+                {r.status === 'propuesta' ? <span className="chip chip-warn" style={{ marginLeft: 6 }}>Por aprobar</span>
+                  : r.status === 'rechazada' ? <span className="chip" style={{ marginLeft: 6 }}>Rechazada{r.approvedByName ? ` por ${r.approvedByName}` : ''}</span>
+                    : r.approvedByName ? ` (aprobó ${r.approvedByName})` : ''}
+              </p>
             ))}
+            <Link to="/reprogramaciones" className="hint">Ver en Reprogramaciones</Link>
           </div>
         )}
       </div>
@@ -292,6 +299,10 @@ function DecisionForm({ detail, onDone }: { detail: Detail; onDone: () => void }
 }
 
 function RescheduleForm({ detail, onDone }: { detail: Detail; onDone: () => void }) {
+  const { can } = useAuth();
+  // El supervisor propone; coordinación o la jefatura aprueban (en ese caso se aplica en el acto).
+  const approver = can(...RESCHEDULE_APPROVER_ROLES);
+  const pending = detail.reschedules.some((r) => r.status === 'propuesta');
   const initial = detail.schedules.find((s) => s.id === detail.scheduleId) ?? detail.schedules[0]!;
   const [scheduleId, setScheduleId] = useState(initial.id);
   const [newDate, setNewDate] = useState('');
@@ -303,7 +314,8 @@ function RescheduleForm({ detail, onDone }: { detail: Detail; onDone: () => void
   });
   return (
     <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div className="section-title" style={{ margin: 0 }}>Reprogramar visita</div>
+      <div className="section-title" style={{ margin: 0 }}>{approver ? 'Reprogramar visita' : 'Proponer reprogramación'}</div>
+      {pending && <p className="hint" style={{ margin: 0 }}>Ya hay una propuesta por aprobar; se revisa en Reprogramaciones.</p>}
       <div className="grid-2">
         <label className="field">
           <span className="label">Visita programada</span>
@@ -320,9 +332,13 @@ function RescheduleForm({ detail, onDone }: { detail: Detail; onDone: () => void
       <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
         <input type="checkbox" checked={reopen} onChange={(e) => setReopen(e.target.checked)} /> Volver a dejar pendientes las unidades no realizadas de la estación
       </label>
-      <p className="hint" style={{ margin: 0 }}>Se guarda la fecha original, la nueva, el motivo y quién aprobó. La brigada lo verá al actualizar su paquete de trabajo.</p>
+      <p className="hint" style={{ margin: 0 }}>
+        {approver
+          ? 'Se guarda la fecha original, la nueva, el motivo y quién aprobó. La brigada lo verá al actualizar su paquete de trabajo.'
+          : 'Queda por aprobar: coordinación la revisa y, al aprobarla, se actualiza el cronograma.'}
+      </p>
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <button className="btn btn-primary" disabled={!newDate || reason.trim().length < 3 || save.isPending} onClick={() => save.mutate()}>Reprogramar</button>
+        <button className="btn btn-primary" disabled={!newDate || reason.trim().length < 3 || save.isPending} onClick={() => save.mutate()}>{approver ? 'Reprogramar' : 'Enviar propuesta'}</button>
       </div>
       <ErrorBox error={save.error} />
     </div>
