@@ -845,7 +845,12 @@ async function pushAll(
   }
 
   // 7b) Consultas de coordinación dirigidas a mí (se guardan para leerlas y responder sin conexión).
-  const inq = await api<MyInquiryDto[]>('/field/inquiries/mine', {}, 20000);
+  // Un servidor sin consultas (versión anterior) responde 404: se omite sin marcar error de sincronización.
+  const inq = await api<MyInquiryDto[]>('/field/inquiries/mine', {}, 20000).catch((e: unknown) => {
+    if (e instanceof ApiError && e.status === 404) return null;
+    throw e;
+  });
+  if (inq) {
   const prevInq = new Map((await db.getAllAsync<{ id: string; data: string }>('SELECT id, data FROM inquiries_in WHERE user_id = ?', userId))
     .map((x) => [x.id, JSON.parse(x.data) as MyInquiryDto]));
   await db.withTransactionAsync(async () => {
@@ -861,6 +866,7 @@ async function pushAll(
       if (asked(x) > asked(before)) report.responses++;
     }
   });
+  }
 
   // 8) Supervisor: alertas de sus brigadas (registradas por otras personas).
   if (pulls.brigadeIncidents) {

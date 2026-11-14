@@ -50,7 +50,8 @@ export async function buildApp() {
     return reply.code(status).send({ error: status >= 500 ? 'Error interno' : err.message });
   });
 
-  await app.register(cors, { origin: true, credentials: true });
+  // @fastify/cors 11 solo permite GET, HEAD y POST si no se indican los métodos.
+  await app.register(cors, { origin: true, credentials: true, methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] });
   await app.register(sensible);
   await app.register(dbPlugin);
   await app.register(authPlugin);
