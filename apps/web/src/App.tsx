@@ -16,6 +16,7 @@ import { SpeciesPage } from './pages/Species';
 import { AlertsPage } from './pages/Alerts';
 import { InquiriesPage } from './pages/Inquiries';
 import { ReschedulesPage } from './pages/Reschedules';
+import { DocumentsPage } from './pages/Documents';
 import { LogisticsPage } from './pages/Logistics';
 import { TrackingPage } from './pages/Tracking';
 import { BrigadeTrackingPage } from './pages/BrigadeTracking';
@@ -55,6 +56,7 @@ export function App() {
               <Route path="alertas" element={<AlertsPage />} />
               <Route path="consultas" element={<InquiriesPage />} />
               <Route path="reprogramaciones" element={<ReschedulesPage />} />
+              <Route path="documentos" element={<DocumentsPage />} />
               <Route path="logistica" element={<LogisticsPage />} />
             </>
           )}

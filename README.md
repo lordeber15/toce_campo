@@ -151,15 +151,26 @@ La app abre la vista del rol principal: **Mi jornada** (especialista / jefe de b
   - Si la reprogramación tiene una alerta vinculada, cada paso queda anotado en su conversación.
 - Las propuestas pendientes se suman a "Reprogramaciones pendientes" en Avance de brigadas.
 
+## Documentos y evidencias (web · sección 6)
+
+**Web → Documentos y evidencias** junta todos los archivos del proyecto: fotos y audios de campo, adjuntos de alertas y consultas, comprobantes de logística, evidencias de reprogramaciones y documentos subidos en la web.
+
+- **Contexto automático**: cada archivo muestra su brigada, persona, estación, método y unidad, según de dónde venga. No hay que clasificarlo a mano.
+- **Filtros**: origen, tipo (fotos, audios, documentos, comprobantes), brigada, persona, estación, método, fechas y búsqueda. Se ve en miniaturas o en lista.
+- **Vista previa**: imagen, audio o PDF, con GPS y quién lo subió. Se descarga la versión comprimida o el original en alta resolución.
+- **Descargar en carpetas (ZIP)**: Proyecto / Brigada / Persona / Estación / Método / Unidad / Tipo.
+  - Lo que no viene de un registro de campo va en una carpeta con su origen (Alerta, Consulta, Logística, etc.).
+  - LEEME.txt lista lo que sigue en los teléfonos.
+- **Subir documento**: actas, permisos, informes o planos, con brigada y estación opcionales. Se pueden borrar (queda en la auditoría). Las evidencias de campo no se borran.
+
 ## Estado y pendientes
 
-**Hecho:** Fase 1 (operación de campo) y Fase 2 (supervisión web: avance, alertas, consultas, reprogramaciones, reportes y Excel).
+**Hecho:** Fase 1 (operación de campo), Fase 2 (supervisión web: avance, alertas, consultas, reprogramaciones, reportes y Excel) y sección 6 (documentos y evidencias).
 
 **Pendiente, en este orden:**
-1. Desplegar en el VPS (migraciones 0005 y 0006) e instalar el APK nuevo.
-2. Sección 6: repositorio unificado de documentos y evidencias.
-3. Catálogo de especies (falta el Excel).
-4. Menores: actualizar PostGIS, refactorizar los avisos de lint del móvil, respuestas con foto en consultas desde el teléfono.
+1. Desplegar en el VPS la sección 6 (migración 0007).
+2. Catálogo de especies (falta el Excel).
+3. Menores: actualizar PostGIS, refactorizar los avisos de lint del móvil, respuestas con foto en consultas desde el teléfono.
 
 **Después (Fase 3, postergada por decisión del 2026-11-14):** transcripción de audios y extracción de información,
 clasificación de observaciones y validación con IA, cálculos estadísticos y gráficos, y reportes Word.
@@ -234,6 +245,7 @@ scripts/smoke-tracking.sh # avance de brigadas: indicadores, desviación, curva 
 scripts/smoke-records.sh # registros de campo: filtros, búsqueda por especie, ficha con formulario, fotos y permisos (solo lee)
 scripts/smoke-reports.sh # reportes: diario, Excel diario/consolidado/registros, ZIP de evidencias y tickets (usa y quita el avance de ejemplo)
 scripts/smoke-inquiries.sh # consultas: app, respuesta sin duplicar, llamadas registradas, adjuntos, cierre y permisos (borra lo que crea)
+scripts/smoke-documents.sh # documentos y evidencias: contexto por origen, filtros, vista previa, ZIP en carpetas, carga/borrado y permisos (borra lo que crea)
 scripts/smoke-reschedules.sh # reprogramaciones: propuesta, evidencia, aprobación con ajuste, rechazo, historial, tablero, paquete y permisos (borra lo que crea)
 scripts/smoke-supervision-logistics.sh # supervisor y logístico: incidencias con solución, alertas de brigada, movilidad, apoyos, viáticos, muestras, equipos
 pnpm typecheck

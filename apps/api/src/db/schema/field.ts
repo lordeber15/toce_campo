@@ -59,6 +59,7 @@ export const attachmentOwnerEnum = pgEnum('attachment_owner', [
   'logistics',
   'station',
   'reschedule',
+  'document',
 ]);
 export const uploadStatusEnum = pgEnum('upload_status', ['pendiente', 'subido', 'error']);
 
@@ -92,6 +93,8 @@ export const attachments = pgTable(
     projectId: uuid('project_id').references(() => projects.id),
     stationId: uuid('station_id').references(() => stations.id),
     samplingUnitId: uuid('sampling_unit_id').references(() => samplingUnits.id),
+    /** Documentos del proyecto: brigada a la que corresponden (opcional). */
+    brigadeId: uuid('brigade_id').references(() => brigades.id),
     uploadStatus: uploadStatusEnum('upload_status').notNull().default('pendiente'),
     originalUploadStatus: uploadStatusEnum('original_upload_status').notNull().default('pendiente'),
     caption: text('caption'),
@@ -102,6 +105,7 @@ export const attachments = pgTable(
     uniqueIndex('attachments_client_idx').on(t.clientId),
     index('attachments_owner_idx').on(t.ownerType, t.ownerId),
     index('attachments_unit_idx').on(t.samplingUnitId),
+    index('attachments_project_idx').on(t.projectId, t.takenAt),
   ],
 );
 

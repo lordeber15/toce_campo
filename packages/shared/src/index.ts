@@ -13,3 +13,4 @@ export * from './records.js';
 export * from './reports.js';
 export * from './inquiries.js';
 export * from './reschedules.js';
+export * from './documents.js';

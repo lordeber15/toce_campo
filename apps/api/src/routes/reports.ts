@@ -16,11 +16,11 @@ const exportQuery = recordsQuerySchema.omit({ page: true });
 const EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'audio/mp4': 'm4a', 'audio/m4a': 'm4a', 'audio/aac': 'aac' };
 
 /** Nombre seguro para carpetas y archivos del ZIP (Windows incluido). */
-const safe = (s: string | null | undefined, fallback: string) =>
+export const safe = (s: string | null | undefined, fallback: string) =>
   (s ?? '').normalize('NFC').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '').slice(0, 60) || fallback;
 
 /** Content-Disposition con nombre UTF-8 (tildes) y alternativa ASCII. */
-const disposition = (name: string) =>
+export const disposition = (name: string) =>
   `attachment; filename="${name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '')}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 
 /**
