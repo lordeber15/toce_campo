@@ -14,10 +14,12 @@ import { SchedulePage } from './pages/Schedule';
 import { MethodsPage } from './pages/Methods';
 import { SpeciesPage } from './pages/Species';
 import { AlertsPage } from './pages/Alerts';
+import { InquiriesPage } from './pages/Inquiries';
 import { LogisticsPage } from './pages/Logistics';
 import { TrackingPage } from './pages/Tracking';
 import { BrigadeTrackingPage } from './pages/BrigadeTracking';
 import { RecordDetailPage, RecordsPage } from './pages/Records';
+import { ReportsPage } from './pages/Reports';
 
 export function App() {
   const { user, loading, can } = useAuth();
@@ -46,9 +48,11 @@ export function App() {
               <Route path="especies" element={<SpeciesPage />} />
               <Route path="seguimiento" element={<TrackingPage />} />
               <Route path="seguimiento/:id" element={<BrigadeTrackingPage />} />
-              <Route path="consultas" element={<RecordsPage />} />
-              <Route path="consultas/:id" element={<RecordDetailPage />} />
+              <Route path="registros" element={<RecordsPage />} />
+              <Route path="registros/:id" element={<RecordDetailPage />} />
+              <Route path="reportes" element={<ReportsPage />} />
               <Route path="alertas" element={<AlertsPage />} />
+              <Route path="consultas" element={<InquiriesPage />} />
               <Route path="logistica" element={<LogisticsPage />} />
             </>
           )}

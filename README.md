@@ -103,13 +103,38 @@ La app abre la vista del rol principal: **Mi jornada** (especialista / jefe de b
 - La unidad de cálculo es brigada × estación con las unidades de los métodos de su especialidad; los registros abiertos no cuentan para el avance.
 - `scripts/demo-avance.sh` carga un avance de ejemplo para ver el tablero con datos; `scripts/demo-avance.sh --limpiar` lo quita y deja todo como estaba.
 
-## Consultas (web · Fase 2)
+## Registros de campo (web · Fase 2)
 
-**Web → Consultas** (coordinador, supervisor, jefe de proyecto). Lista todos los registros de campo sincronizados (una fila por unidad ejecutada), del más reciente al más antiguo, de 50 en 50.
+**Web → Registros de campo** (coordinador, supervisor, jefe de proyecto). Lista todos los registros de campo sincronizados (una fila por unidad ejecutada), del más reciente al más antiguo, de 50 en 50.
 
 - **Filtros**: especialidad, método, estación, brigada, especialista, estado y rango de fechas (hora de Lima). Solo aparecen valores que tienen registros. Los filtros quedan en la URL: se pueden compartir y se conservan al volver de una ficha.
 - **Búsqueda**: código de unidad, especialista, observaciones o cualquier valor anotado en el formulario (p. ej. el nombre de una especie).
 - **Ficha de la unidad**: especialista, brigada, horas de inicio y fin, fecha programada (avisa si se ejecutó en otra fecha), coordenadas UTM de la estación y del punto de inicio con la distancia entre ambos (avisa si pasa de 1 km), observaciones, tabla con los registros del formulario, fotos por orientación con su UTM y enlace al original en alta resolución, notas de voz y alertas de la unidad. Los archivos que siguen en el teléfono se indican como pendientes.
+- **Exportar a Excel** (lo filtrado): hoja *Unidades* y una hoja por método con los campos de su formulario (especie, individuos, etc.).
+- **Descargar evidencias** (lo filtrado): ZIP con fotos (original en alta resolución si ya se subió) y audios en carpetas `Proyecto / Brigada / Especialista / Estación / Método / Unidad / Fotos|Audios`, más un `LEEME.txt` con lo que sigue en los teléfonos. Avisa el tamaño antes de bajar; máximo 3000 archivos por descarga.
+
+## Reportes (web · Fase 2)
+
+**Web → Reportes**, con una fecha a elegir:
+
+- **Reporte diario** (en pantalla y en Excel): totales del día, avance acumulado, brigadas, estaciones programadas ese día, unidades registradas, incidencias, reprogramaciones y actividades pendientes.
+- **Reporte consolidado** (Excel, la fecha es el corte): resumen del proyecto, cumplimiento por brigada y por estación (con métodos), desviaciones del cronograma unidad por unidad, alertas con su atención, reprogramaciones y estado de sincronización de cada integrante.
+- Las descargas usan un ticket de un minuto atado a la ruta, para que el navegador baje el archivo directo (sin pasar por memoria).
+
+## Consultas (web + móvil · Fase 2)
+
+**Web → Consultas** (coordinador, jefe de proyecto y supervisor):
+
+- **Nueva consulta**: brigada, persona consultada (jefe, integrantes, supervisor o logístico), estación y método opcionales, asunto y medio.
+  - **Por la app**: llega al teléfono al sincronizar. La persona responde desde **Consultas de coordinación** en su inicio, aunque no tenga señal; la respuesta se envía al conectarse.
+  - **Por llamada, WhatsApp, radio o en persona**: queda constancia de lo preguntado y, si ya respondió, de la respuesta.
+- **En cada consulta**:
+  - **Pedir más información**: vuelve a quedar esperando respuesta.
+  - **Registrar respuesta recibida** por otro medio: queda a nombre de la persona consultada, con quién la anotó.
+  - **Seguimiento**: nota que no cambia el estado.
+  - **Adjuntar evidencias**: fotos, PDF, audio, Excel o Word, de hasta 25 MB. La persona consultada también las abre desde el teléfono.
+  - **Cerrar y reabrir**: si una respuesta enviada sin señal llega después del cierre, se guarda y la consulta sigue cerrada.
+- **Historial**: la bandeja se filtra por estado y brigada, y busca en asunto, persona, estación y texto de los mensajes. Crear, cerrar y reabrir quedan en la auditoría.
 
 ## Instalar la app en un teléfono Android
 
@@ -178,7 +203,9 @@ scripts/smoke-basemap.sh # mapa base OSM: estilo, teselas, límites de zona
 scripts/smoke-incidents.sh # alertas: registro, respuesta, conversación y reprogramación (deja todo como estaba)
 scripts/smoke-field.sh   # registro de campo: ejecuciones, fotos, audios y subida a MinIO (deja todo como estaba)
 scripts/smoke-tracking.sh # avance de brigadas: indicadores, desviación, curva y permisos (usa y quita el avance de ejemplo)
-scripts/smoke-records.sh # consultas: filtros, búsqueda por especie, ficha con formulario, fotos y permisos (solo lee)
+scripts/smoke-records.sh # registros de campo: filtros, búsqueda por especie, ficha con formulario, fotos y permisos (solo lee)
+scripts/smoke-reports.sh # reportes: diario, Excel diario/consolidado/registros, ZIP de evidencias y tickets (usa y quita el avance de ejemplo)
+scripts/smoke-inquiries.sh # consultas: app, respuesta sin duplicar, llamadas registradas, adjuntos, cierre y permisos (borra lo que crea)
 scripts/smoke-supervision-logistics.sh # supervisor y logístico: incidencias con solución, alertas de brigada, movilidad, apoyos, viáticos, muestras, equipos
 pnpm typecheck
 ```

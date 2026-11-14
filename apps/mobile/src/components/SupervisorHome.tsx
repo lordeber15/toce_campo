@@ -9,6 +9,7 @@ import { todayLima, usePackageIndex, useWorkPackage } from '../lib/workPackage';
 import { StationCard } from './field';
 import { AlertButton } from './alerts';
 import { AccountFooter, DayTabs, LinkRow, RetentionPrompt, SentBanner, SyncBar, UploadBar, homeStyles as hs, longDate } from './home';
+import { InquiriesLink } from './inquiries';
 import { Banner, Button } from './ui';
 import { colors, radius } from '../theme';
 
@@ -83,6 +84,7 @@ export function SupervisorHome() {
           unread={unread > 0}
           onPress={() => router.push('/supervision/alertas')}
         />
+        <InquiriesLink />
         {roleView.logistics && <LinkRow text="Logística de la brigada" onPress={() => router.push('/logistica')} />}
       </View>
 

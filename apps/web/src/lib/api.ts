@@ -56,6 +56,16 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return data as T;
 }
 
+/**
+ * Descarga un archivo de la API (Excel, ZIP) sin cargarlo en memoria: pide un ticket de un minuto
+ * y deja que el navegador abra la URL y guarde el archivo.
+ */
+export async function download(path: string) {
+  const [pathname] = path.split('?');
+  const { ticket } = await api<{ ticket: string }>('/download-ticket', { method: 'POST', body: JSON.stringify({ path: pathname }) });
+  window.location.assign(`${API}${path}${path.includes('?') ? '&' : '?'}ticket=${encodeURIComponent(ticket)}`);
+}
+
 export async function login(dni: string, password: string): Promise<AuthUser> {
   const r = await api<AuthResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ dni, password }) });
   storeSession(r);

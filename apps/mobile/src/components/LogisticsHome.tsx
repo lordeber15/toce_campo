@@ -11,6 +11,7 @@ import { useWorkPackage } from '../lib/workPackage';
 import { AlertButton } from './alerts';
 import { Chip } from './form';
 import { AccountFooter, LinkRow, RetentionPrompt, SentBanner, SyncBar, UploadBar, homeStyles as hs } from './home';
+import { InquiriesLink } from './inquiries';
 import { Banner, Button } from './ui';
 import { colors, radius } from '../theme';
 
@@ -111,6 +112,7 @@ export function LogisticsHome() {
                 onPress={() => router.push('/alertas')}
               />
             )}
+            <InquiriesLink />
           </View>
 
           <View style={s.grid}>

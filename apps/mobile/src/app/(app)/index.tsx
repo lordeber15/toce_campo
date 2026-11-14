@@ -13,6 +13,7 @@ import {
 } from '../../components/home';
 import { SupervisorHome } from '../../components/SupervisorHome';
 import { LogisticsHome } from '../../components/LogisticsHome';
+import { InquiriesLink } from '../../components/inquiries';
 import { Banner, Button } from '../../components/ui';
 import { colors } from '../../theme';
 
@@ -140,6 +141,7 @@ function AlertsSummary() {
           onPress={() => router.push('/alertas')}
         />
       )}
+      <InquiriesLink />
     </View>
   );
 }

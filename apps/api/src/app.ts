@@ -22,6 +22,8 @@ import incidents from './routes/incidents.js';
 import logistics from './routes/logistics.js';
 import tracking from './routes/tracking.js';
 import records from './routes/records.js';
+import reports from './routes/reports.js';
+import inquiries from './routes/inquiries.js';
 
 export async function buildApp() {
   const app = Fastify({
@@ -57,7 +59,7 @@ export async function buildApp() {
   await app.register(health, { prefix: '/api' });
   await app.register(auth, { prefix: '/api' });
   await app.register(users, { prefix: '/api' });
-  for (const routes of [methods, projects, brigades, stations, schedules, species, workPackage, field, basemap, incidents, logistics, tracking, records]) {
+  for (const routes of [methods, projects, brigades, stations, schedules, species, workPackage, field, basemap, incidents, logistics, tracking, records, reports, inquiries]) {
     await app.register(routes, { prefix: '/api' });
   }
 

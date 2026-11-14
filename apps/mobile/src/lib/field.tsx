@@ -4,7 +4,7 @@ import * as Crypto from 'expo-crypto';
 import { File, UploadType } from 'expo-file-system';
 import type {
   AttachmentMetaResult, BrigadeIncidentDto, ExecutionFormData, ExecutionStatus, ExecutionSync, ExecutionSyncResult, IncidentMoment,
-  IncidentOrigin, IncidentSync, IncidentType, LogisticsData, LogisticsEntity, LogisticsRecordDto, MyIncidentDto, WpUnit,
+  IncidentOrigin, IncidentSync, IncidentType, LogisticsData, LogisticsEntity, LogisticsRecordDto, MyIncidentDto, MyInquiryDto, WpUnit,
 } from '@toce/shared';
 import { ApiError, OfflineError, api, getAccessToken, hasAccessToken, refreshAccessToken } from './api';
 import { useAuth } from './auth';
@@ -121,6 +121,13 @@ export type BrigadeIncident = BrigadeIncidentDto & {
   unread: boolean;
 };
 
+/** Consulta de coordinación dirigida al usuario, con sus respuestas aún por enviar. */
+export type LocalInquiry = MyInquiryDto & {
+  outbox: { clientId: string; body: string; sentAt: string; error: string | null }[];
+  /** Hay preguntas de coordinación que el usuario no ha visto. */
+  unread: boolean;
+};
+
 /** Registro logístico guardado en el teléfono. */
 export type LocalLogistics<E extends LogisticsEntity = LogisticsEntity> = {
   clientId: string;
@@ -163,6 +170,9 @@ type Ctx = {
   brigadeIncidents: BrigadeIncident[];
   unreadBrigadeIncidents: number;
   logistics: LocalLogistics[];
+  /** Consultas de coordinación dirigidas al usuario. */
+  inquiries: LocalInquiry[];
+  unreadInquiries: number;
   rev: number;
   pending: SyncSummary;
   syncing: boolean;
@@ -178,6 +188,8 @@ type Ctx = {
   sendIncidentMessage: (incidentClientId: string, body: string) => Promise<void>;
   markIncidentSeen: (incidentClientId: string) => Promise<void>;
   markBrigadeIncidentSeen: (incidentClientId: string) => Promise<void>;
+  sendInquiryReply: (inquiryId: string, body: string) => Promise<void>;
+  markInquirySeen: (inquiryId: string) => Promise<void>;
   saveLogistics: <E extends LogisticsEntity>(entity: E, input: LogisticsInput<E>) => Promise<void>;
   /** Archivos ya enviados con más de 30 días que se pueden borrar del teléfono. */
   retentionCandidates: () => Promise<{ count: number; bytes: number }>;
@@ -241,6 +253,12 @@ function hasNews(remote: MyIncidentDto | null, seenAt: string | null, userId: st
   return latest > since;
 }
 
+/** ¿Coordinación preguntó algo después de la última vez que se abrió la consulta? */
+function inquiryNews(q: MyInquiryDto, seenAt: string | null, userId: string): boolean {
+  const since = seenAt ? new Date(seenAt).getTime() : 0;
+  return q.thread.some((m) => m.authorId !== userId && (m.kind === 'consulta' || m.kind === 'solicitud_info') && new Date(m.sentAt).getTime() > since);
+}
+
 /** Columnas de attachments con alias en camelCase (p = prefijo de tabla, p. ej. 'a.'). */
 const attCols = (p = '') =>
   [
@@ -277,6 +295,7 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
   const [incidents, setIncidents] = useState<LocalIncident[]>([]);
   const [brigadeIncidents, setBrigadeIncidents] = useState<BrigadeIncident[]>([]);
   const [logistics, setLogistics] = useState<LocalLogistics[]>([]);
+  const [inquiries, setInquiries] = useState<LocalInquiry[]>([]);
   const [rev, setRev] = useState(0);
   const [pending, setPending] = useState<SyncSummary>({ executions: 0, files: 0, bytes: 0 });
   const [syncing, setSyncing] = useState(false);
@@ -292,6 +311,7 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
       setIncidents([]);
       setBrigadeIncidents([]);
       setLogistics([]);
+      setInquiries([]);
       return;
     }
     const db = await getDb();
@@ -331,19 +351,34 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
        FROM logistics l WHERE l.user_id = ? ORDER BY l.updated_at DESC`, userId);
     setLogistics(lg.map(toLogistics));
 
+    const qi = await db.getAllAsync<{ id: string; data: string; seen_at: string | null }>('SELECT id, data, seen_at FROM inquiries_in WHERE user_id = ?', userId);
+    const qo = await db.getAllAsync<{ client_id: string; inquiry_id: string; body: string; sent_at: string; sync_error: string | null }>(
+      'SELECT client_id, inquiry_id, body, sent_at, sync_error FROM inquiry_replies_out WHERE user_id = ? AND synced <> 1 ORDER BY sent_at', userId);
+    setInquiries(qi.map((r) => {
+      const d = JSON.parse(r.data) as MyInquiryDto;
+      const sent = new Set(d.thread.map((m) => m.clientId));
+      return {
+        ...d,
+        outbox: qo.filter((m) => m.inquiry_id === r.id && !sent.has(m.client_id))
+          .map((m) => ({ clientId: m.client_id, body: m.body, sentAt: m.sent_at, error: m.sync_error })),
+        unread: inquiryNews(d, r.seen_at, userId),
+      };
+    }).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+
     const files = MY_FILES.replaceAll('$u', '?');
     const p = await db.getFirstAsync<{ ex: number; files: number; bytes: number | null }>(
       `SELECT
          (SELECT COUNT(*) FROM executions WHERE user_id = ? AND (synced_at IS NULL OR synced_at <> updated_at))
          + (SELECT COUNT(*) FROM incidents WHERE user_id = ? AND (synced_at IS NULL OR synced_at <> updated_at))
          + (SELECT COUNT(*) FROM logistics WHERE user_id = ? AND (synced_at IS NULL OR synced_at <> updated_at))
-         + (SELECT COUNT(*) FROM incident_messages_out WHERE synced = 0) AS ex,
+         + (SELECT COUNT(*) FROM incident_messages_out WHERE synced = 0)
+         + (SELECT COUNT(*) FROM inquiry_replies_out WHERE user_id = ? AND synced = 0) AS ex,
          (SELECT COUNT(*) FROM attachments a WHERE ${files}
             AND (a.meta_synced = 0 OR a.uploaded = 0 OR (a.original_path IS NOT NULL AND a.original_uploaded = 0))) AS files,
          (SELECT SUM(CASE WHEN a.uploaded = 0 THEN COALESCE(a.size_bytes, 0) ELSE 0 END
                    + CASE WHEN a.original_path IS NOT NULL AND a.original_uploaded = 0 THEN COALESCE(a.original_size_bytes, 0) ELSE 0 END)
             FROM attachments a WHERE ${files}) AS bytes`,
-      userId, userId, userId, userId, userId, userId, userId, userId, userId);
+      userId, userId, userId, userId, userId, userId, userId, userId, userId, userId);
     setPending({ executions: p?.ex ?? 0, files: p?.files ?? 0, bytes: p?.bytes ?? 0 });
     setRev((v) => v + 1);
   }, [userId]);
@@ -512,6 +547,22 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
     await reload();
   }, [userId, reload]);
 
+  const sendInquiryReply = useCallback(async (inquiryId: string, body: string) => {
+    if (!userId) throw new Error('Sin sesión');
+    const db = await getDb();
+    await db.runAsync('INSERT INTO inquiry_replies_out (client_id, user_id, inquiry_id, body, sent_at) VALUES (?, ?, ?, ?, ?)',
+      Crypto.randomUUID(), userId, inquiryId, body.trim(), new Date().toISOString());
+    await reload();
+    scheduleSync();
+  }, [userId, reload, scheduleSync]);
+
+  const markInquirySeen = useCallback(async (inquiryId: string) => {
+    if (!userId) return;
+    const db = await getDb();
+    await db.runAsync('UPDATE inquiries_in SET seen_at = ? WHERE user_id = ? AND id = ?', new Date().toISOString(), userId, inquiryId);
+    await reload();
+  }, [userId, reload]);
+
   const saveLogistics = useCallback(async <E extends LogisticsEntity>(entity: E, input: LogisticsInput<E>) => {
     if (!userId) throw new Error('Sin sesión');
     const db = await getDb();
@@ -562,11 +613,13 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
 
   const unreadIncidents = incidents.filter((i) => i.unread).length;
   const unreadBrigadeIncidents = brigadeIncidents.filter((i) => i.unread).length;
+  const unreadInquiries = inquiries.filter((i) => i.unread).length;
 
   return (
     <FieldContext.Provider
       value={{
-        byUnit, executions, incidents, unreadIncidents, brigadeIncidents, unreadBrigadeIncidents, logistics, rev, pending, syncing,
+        byUnit, executions, incidents, unreadIncidents, brigadeIncidents, unreadBrigadeIncidents, logistics, inquiries, unreadInquiries,
+        rev, pending, syncing, sendInquiryReply, markInquirySeen,
         lastSyncAt, lastSyncError, lastReport, start, update, attachmentsOf, addAttachment, removeAttachment, saveIncident,
         sendIncidentMessage, markIncidentSeen, markBrigadeIncidentSeen, saveLogistics, retentionCandidates, freeUploadedFiles, syncNow,
       }}
@@ -706,6 +759,24 @@ async function pushAll(
       if (!(err instanceof ApiError)) throw err;
     }
   }
+
+  // 3b) Respuestas a consultas de coordinación.
+  const replies = await db.getAllAsync<{ client_id: string; inquiry_id: string; body: string; sent_at: string }>(
+    'SELECT client_id, inquiry_id, body, sent_at FROM inquiry_replies_out WHERE user_id = ? AND synced = 0 ORDER BY sent_at', userId);
+  for (const m of replies) {
+    try {
+      await api(`/field/inquiries/${m.inquiry_id}/messages`, {
+        method: 'POST', body: JSON.stringify({ clientId: m.client_id, body: m.body, sentAt: m.sent_at }),
+      }, 15000);
+      await db.runAsync('UPDATE inquiry_replies_out SET synced = 1, sync_error = NULL WHERE client_id = ?', m.client_id);
+      report.records++;
+    } catch (err) {
+      if (!(err instanceof ApiError)) throw err;
+      // 4xx: el servidor no la aceptará nunca (consulta borrada o de otra persona); 5xx: se reintenta.
+      const final = err.status >= 400 && err.status < 500;
+      await db.runAsync('UPDATE inquiry_replies_out SET sync_error = ?, synced = ? WHERE client_id = ?', err.message, final ? 2 : 0, m.client_id);
+    }
+  }
   await reload();
 
   // 4) Datos de fotos y audios (requiere que su unidad o alerta ya esté en el servidor).
@@ -772,6 +843,24 @@ async function pushAll(
     if (!before || before.updatedAt !== m.updatedAt) report.responses++;
     if ((before?.reschedules.length ?? 0) < m.reschedules.length) report.rescheduled = true;
   }
+
+  // 7b) Consultas de coordinación dirigidas a mí (se guardan para leerlas y responder sin conexión).
+  const inq = await api<MyInquiryDto[]>('/field/inquiries/mine', {}, 20000);
+  const prevInq = new Map((await db.getAllAsync<{ id: string; data: string }>('SELECT id, data FROM inquiries_in WHERE user_id = ?', userId))
+    .map((x) => [x.id, JSON.parse(x.data) as MyInquiryDto]));
+  await db.withTransactionAsync(async () => {
+    const keep = new Set(inq.map((x) => x.id));
+    for (const id of prevInq.keys()) if (!keep.has(id)) await db.runAsync('DELETE FROM inquiries_in WHERE user_id = ? AND id = ?', userId, id);
+    for (const x of inq) {
+      const before = prevInq.get(x.id);
+      if (before && before.updatedAt === x.updatedAt) continue;
+      await db.runAsync(
+        `INSERT INTO inquiries_in (user_id, id, data) VALUES (?, ?, ?) ON CONFLICT(user_id, id) DO UPDATE SET data = excluded.data`,
+        userId, x.id, JSON.stringify(x));
+      const asked = (q?: MyInquiryDto) => q?.thread.filter((m) => m.authorId !== userId && m.kind !== 'respuesta').length ?? 0;
+      if (asked(x) > asked(before)) report.responses++;
+    }
+  });
 
   // 8) Supervisor: alertas de sus brigadas (registradas por otras personas).
   if (pulls.brigadeIncidents) {

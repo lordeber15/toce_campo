@@ -234,6 +234,8 @@ export const inquiries = pgTable(
     createdById: uuid('created_by_id')
       .notNull()
       .references(() => users.id),
+    closedById: uuid('closed_by_id').references(() => users.id),
+    closedAt: timestamp('closed_at', { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -252,6 +254,12 @@ export const inquiryMessages = pgTable(
       .notNull()
       .references(() => users.id),
     body: text('body').notNull(),
+    /** consulta | solicitud_info | respuesta | seguimiento */
+    kind: text('kind').notNull().default('respuesta'),
+    /** Medio: app | telefono | whatsapp | radio | presencial | otro. */
+    channel: text('channel').notNull().default('app'),
+    /** Respuesta de campo registrada por coordinación (p. ej. una llamada): quién la dio. */
+    onBehalfOfId: uuid('on_behalf_of_id').references(() => users.id),
     sentAt: timestamp('sent_at', { withTimezone: true }).notNull(),
     createdAt: createdAt(),
   },

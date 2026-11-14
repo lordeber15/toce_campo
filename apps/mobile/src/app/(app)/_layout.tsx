@@ -26,6 +26,8 @@ export default function AppLayout() {
           <Stack.Screen name="alertas" options={{ title: 'Mis alertas' }} />
           <Stack.Screen name="alerta/nueva" options={{ title: 'Registrar alerta' }} />
           <Stack.Screen name="alerta/[id]" options={{ title: 'Alerta' }} />
+          <Stack.Screen name="consultas" options={{ title: 'Consultas de coordinación' }} />
+          <Stack.Screen name="consulta/[id]" options={{ title: 'Consulta' }} />
           <Stack.Screen name="supervision/index" options={{ title: 'Supervisión' }} />
           <Stack.Screen name="supervision/nueva" options={{ title: 'Registrar incidencia' }} />
           <Stack.Screen name="supervision/alertas" options={{ title: 'Alertas e incidencias' }} />

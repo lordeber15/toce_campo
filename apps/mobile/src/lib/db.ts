@@ -112,6 +112,23 @@ const MIGRATIONS: string[] = [
      remote_files INTEGER NOT NULL DEFAULT 0
    );
    CREATE INDEX IF NOT EXISTS logistics_entity_idx ON logistics (user_id, entity);`,
+  // Fase 2: consultas de coordinación dirigidas al usuario y sus respuestas por enviar.
+  `CREATE TABLE IF NOT EXISTS inquiries_in (
+     user_id TEXT NOT NULL,
+     id TEXT NOT NULL,           -- id del servidor
+     data TEXT NOT NULL,         -- JSON del servidor (consulta y conversación)
+     seen_at TEXT,
+     PRIMARY KEY (user_id, id)
+   );
+   CREATE TABLE IF NOT EXISTS inquiry_replies_out (
+     client_id TEXT PRIMARY KEY NOT NULL,
+     user_id TEXT NOT NULL,
+     inquiry_id TEXT NOT NULL,
+     body TEXT NOT NULL,
+     sent_at TEXT NOT NULL,
+     synced INTEGER NOT NULL DEFAULT 0,   -- 0 por enviar · 1 enviada · 2 rechazada por el servidor
+     sync_error TEXT
+   );`,
 ];
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;

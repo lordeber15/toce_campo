@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prueba las consultas (Sprint 2.2): lista de registros de campo con filtros, búsqueda, detalle con
+# Prueba los registros de campo (Sprint 2.2): lista de registros de campo con filtros, búsqueda, detalle con
 # formulario y archivos, y permisos. Solo lee; necesita al menos un registro sincronizado desde el teléfono.
 set -u
 B=${API:-http://localhost:4000/api}
@@ -14,7 +14,7 @@ PROJ=$(psql "select id from projects where deleted_at is null order by created_a
 L=$(curl -s "$B/projects/$PROJ/records" -H "authorization: Bearer $COO")
 [ "$(echo "$L" | js 'p.total')" -gt 0 ] 2>/dev/null || { echo "No hay registros de campo: sincroniza al menos una unidad desde el teléfono"; exit 1; }
 
-echo "Consultas"
+echo "Registros de campo"
 check "total coincide con la base" "$(echo "$L" | js 'p.total')" "$(psql "select count(*) from executions e join stations s on s.id=e.station_id where s.project_id='$PROJ' and s.deleted_at is null")"
 check "orden: más reciente primero" "$(echo "$L" | js 'p.rows.every((r,i,a)=>!i||a[i-1].startedAt>=r.startedAt)')" true
 check "fechas en ISO" "$(echo "$L" | js 'p.rows.every(r=>/^\d{4}-\d\d-\d\dT.*Z$/.test(r.startedAt))')" true
@@ -48,4 +48,4 @@ check "registro inexistente: 404" "$(curl -s -o /dev/null -w '%{http_code}' "$B/
 check "especialista no consulta: 403" "$(curl -s -o /dev/null -w '%{http_code}' "$B/projects/$PROJ/records" -H "authorization: Bearer $ANA")" 403
 
 echo
-[ $FAILS -eq 0 ] && echo "Todas las pruebas de consultas pasaron" || { echo "$FAILS pruebas fallaron"; exit 1; }
+[ $FAILS -eq 0 ] && echo "Todas las pruebas de registros pasaron" || { echo "$FAILS pruebas fallaron"; exit 1; }

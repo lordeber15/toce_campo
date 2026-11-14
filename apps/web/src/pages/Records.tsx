@@ -6,7 +6,7 @@ import {
   type ExecutionStatus, type FormField, type IncidentStatus, type IncidentType, type RecordAttachment, type RecordDetail,
   type RecordFilterOptions, type RecordsPage,
 } from '@toce/shared';
-import { api } from '../lib/api';
+import { api, download } from '../lib/api';
 import { useProject } from '../lib/project';
 import { ErrorBox, NoProject } from '../components/Dialog';
 
@@ -21,7 +21,7 @@ const minutes = (a: string, b: string | null) => (b ? Math.round((Date.parse(b) 
 
 const FILTER_KEYS = ['specialtyId', 'methodId', 'stationId', 'brigadeId', 'specialistId', 'status', 'from', 'to', 'q'] as const;
 
-/** Consultas (5.3): todos los registros de campo del proyecto con filtros; abre la ficha de cada unidad. */
+/** Registros de campo (5.6, registros históricos): todos los registros del proyecto con filtros, exportación y ficha de cada unidad. */
 export function RecordsPage() {
   const { project } = useProject();
   const [params, setParams] = useSearchParams();
@@ -70,9 +70,10 @@ export function RecordsPage() {
     <>
       <div className="page-head">
         <div>
-          <h1>Consultas</h1>
-          <p>Registros de campo de {project.code}: formularios, fotos y notas de voz de cada unidad de muestreo.</p>
+          <h1>Registros de campo</h1>
+          <p>Formularios, fotos y notas de voz de cada unidad de muestreo de {project.code}.</p>
         </div>
+        <ExportButtons projectId={project.id} filters={filters} disabled={!data?.total} />
       </div>
       <div className="card">
         <div className="toolbar">
@@ -107,7 +108,7 @@ export function RecordsPage() {
               </thead>
               <tbody>
                 {data.rows.map((r) => {
-                  const open = () => navigate(`/consultas/${r.id}`, { state: { back: `/consultas?${params}` } });
+                  const open = () => navigate(`/registros/${r.id}`, { state: { back: `/registros?${params}` } });
                   return (
                     <tr key={r.id} className="clickable-row" onClick={open} tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && open()}>
                       <td><strong>{r.unitCode}</strong></td>
@@ -147,6 +148,44 @@ export function RecordsPage() {
   );
 }
 
+/** Exporta lo filtrado: Excel con las unidades y los formularios por método, y ZIP con fotos y audios por carpetas. */
+function ExportButtons({ projectId, filters, disabled }: { projectId: string; filters: Record<string, string>; disabled: boolean }) {
+  const [busy, setBusy] = useState<'xlsx' | 'zip' | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const qs = new URLSearchParams(filters).toString();
+  const run = async (kind: 'xlsx' | 'zip') => {
+    setBusy(kind); setError(null);
+    try {
+      if (kind === 'zip') {
+        const c = await api<{ ready: number; pending: number; bytes: number; max: number }>(`/projects/${projectId}/evidence/count${qs ? `?${qs}` : ''}`);
+        if (!c.ready) throw new Error(c.pending ? `Las ${c.pending} evidencias aún están en los teléfonos.` : 'No hay fotos ni audios con estos filtros.');
+        if (c.ready > c.max) throw new Error(`Son ${c.ready} archivos; filtra por fecha, brigada o estación para bajar como máximo ${c.max} por vez.`);
+        const mb = c.bytes / 1024 / 1024;
+        const msg = `Se descargarán ${c.ready} archivos (${mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.max(1, Math.round(mb))} MB`})`
+          + `${c.pending ? `; ${c.pending} siguen en los teléfonos y no se incluyen` : ''}. ¿Continuar?`;
+        if (!window.confirm(msg)) return;
+        await download(`/projects/${projectId}/evidence.zip${qs ? `?${qs}` : ''}`);
+      } else {
+        await download(`/projects/${projectId}/records.xlsx${qs ? `?${qs}` : ''}`);
+      }
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="btn btn-sm" disabled={disabled || !!busy} onClick={() => run('xlsx')}>{busy === 'xlsx' ? 'Preparando…' : 'Exportar a Excel'}</button>
+        <button className="btn btn-sm" disabled={disabled || !!busy} onClick={() => run('zip')}>{busy === 'zip' ? 'Preparando…' : 'Descargar evidencias'}</button>
+      </div>
+      <span className="hint">Se exporta lo que muestran los filtros.</span>
+      <ErrorBox error={error} />
+    </div>
+  );
+}
+
 function Select({ label, value, onChange, options }: { label: string; value?: string; onChange: (v: string) => void; options: [string, string][] }) {
   return (
     <select className="input" value={value ?? ''} onChange={(e) => onChange(e.target.value)} aria-label={label} style={{ maxWidth: 200 }}>
@@ -159,7 +198,7 @@ function Select({ label, value, onChange, options }: { label: string; value?: st
 /** Ficha de una unidad de muestreo ejecutada: contexto, ubicación, formulario, fotos, audios y alertas. */
 export function RecordDetailPage() {
   const { id } = useParams();
-  const back = (useLocation().state as { back?: string } | null)?.back ?? '/consultas';
+  const back = (useLocation().state as { back?: string } | null)?.back ?? '/registros';
   const q = useQuery({ queryKey: ['record', id], queryFn: () => api<RecordDetail>(`/records/${id}`) });
   if (q.error) return <ErrorBox error={q.error} />;
   if (!q.data) return <div className="card empty">Cargando registro…</div>;
@@ -176,7 +215,7 @@ export function RecordDetailPage() {
     <>
       <div className="page-head">
         <div>
-          <p><Link to={back} className="back-link">← Consultas</Link></p>
+          <p><Link to={back} className="back-link">← Registros de campo</Link></p>
           <h1>{d.unitCode}</h1>
           <p>{d.methodCode} · {d.methodName} · <span className={STATUS_CHIP[d.status]}>{EXECUTION_STATUS_LABELS[d.status]}</span></p>
         </div>
