@@ -179,9 +179,24 @@ tr:last-child td { border-bottom: 0; }
 textarea.input { height: auto; padding: 10px 12px; min-height: 72px; resize: vertical; }
 .nav-group { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
 .nav-title { font-size: 11px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .06em; padding: 6px 10px 4px; }
+.nav-items { display: flex; flex-direction: column; gap: 2px; }
+/* Título que pliega/despliega el grupo. */
+.nav-toggle { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: 0; border-radius: 6px; cursor: pointer; font-family: inherit; text-align: left; }
+.nav-toggle:hover:not(:disabled) { color: var(--text); background: var(--surface-2); }
+.nav-toggle:disabled { cursor: default; }
+.nav-toggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.nav-toggle span:first-child { flex: 1; }
+.nav-chevron { transition: transform .15s ease; opacity: .7; }
+.nav-group.collapsed .nav-chevron { transform: rotate(-90deg); }
+.nav-group.collapsed { margin-bottom: 2px; }
+.nav-group.collapsed .nav-items { display: none; }
+.nav-count { font-size: 10px; letter-spacing: 0; background: var(--surface-2); color: var(--text-2); padding: 0 6px; border-radius: 99px; line-height: 16px; }
+@media (prefers-reduced-motion: reduce) { .nav-chevron { transition: none; } }
 @media (max-width: 860px) {
   .nav-group { flex-direction: row; margin: 0; }
   .nav-title, .project-switch { display: none; }
+  /* En pantallas angostas el menú es una fila con desplazamiento: se muestra todo. */
+  .nav-items, .nav-group.collapsed .nav-items { display: flex; flex-direction: row; }
 }
 
 /* Seguimiento: curva de avance y barras */
