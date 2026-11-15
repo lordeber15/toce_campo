@@ -1,4 +1,7 @@
 import { NavLink, Outlet } from 'react-router';
+import { useQuery } from '@tanstack/react-query';
+import type { MyOverview } from '@toce/shared';
+import { api } from '../lib/api';
 import { ADMIN_ROLES, ROLE_LABELS, WEB_ROLES, type Role } from '@toce/shared';
 import { useAuth } from '../lib/auth';
 import { useProject } from '../lib/project';
@@ -7,7 +10,7 @@ import { LeafIcon } from './icons';
 type Item = { to: string; label: string; roles?: Role[]; soon?: boolean };
 const VIEWERS: Role[] = [...WEB_ROLES, 'jefe_proyecto'];
 const NAV: { title?: string; items: Item[] }[] = [
-  { items: [{ to: '/', label: 'Inicio' }] },
+  { items: [{ to: '/', label: 'Inicio', roles: VIEWERS }] },
   {
     title: 'Seguimiento',
     items: [
@@ -49,6 +52,9 @@ const NAV: { title?: string; items: Item[] }[] = [
 export function Layout() {
   const { user, logout, can } = useAuth();
   const { projects, project, setProjectId } = useProject();
+  // "Mi trabajo": lo cargado desde el teléfono y, para el jefe de brigada, el tablero de su brigada.
+  const me = useQuery({ queryKey: ['me-overview'], queryFn: () => api<MyOverview>('/me/overview'), staleTime: 5 * 60_000 });
+  const led = (me.data?.ledBrigades ?? []).filter((b) => !project || b.projectId === project.id);
   return (
     <div className="shell">
       <aside className="sidebar">
@@ -60,6 +66,13 @@ export function Layout() {
             </select>
           </div>
         )}
+        <div className="nav-group">
+          <div className="nav-title">Mi trabajo</div>
+          <NavLink to="/mis-registros" className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')}>Mis registros</NavLink>
+          {led.map((b) => (
+            <NavLink key={b.id} to={`/mi-brigada/${b.id}`} className={({ isActive }) => 'nav-link' + (isActive ? ' active' : '')}>Mi brigada · {b.name}</NavLink>
+          ))}
+        </div>
         {NAV.map((group, gi) => {
           const items = group.items.filter((i) => !i.roles || can(...i.roles));
           if (!items.length) return null;

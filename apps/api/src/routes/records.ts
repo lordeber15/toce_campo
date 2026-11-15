@@ -53,6 +53,42 @@ export function recordsWhere(projectId: string, f: Omit<RecordsQuery, 'page'>) {
   return sql.join(where, sql` AND `);
 }
 
+/** Ficha completa de un registro (formulario, fotos, audios y alertas de la unidad). */
+export async function recordDetail(id: string): Promise<RecordDetail> {
+  const row = (await db.execute(sql`
+    SELECT ${ROW_COLUMNS},
+      e.observations, ${iso(sql`e.form_completed_at`)} AS "formCompletedAt", e.device_id AS "deviceId",
+      ST_Y(e.start_geom) AS "startLat", ST_X(e.start_geom) AS "startLng", e.start_accuracy AS "startAccuracy",
+      to_char(sc.planned_date, 'YYYY-MM-DD') AS "plannedDate", to_char(sc.original_date, 'YYYY-MM-DD') AS "originalDate",
+      json_build_object('lat', ST_Y(s.geom), 'lng', ST_X(s.geom), 'vegetationUnit', s.vegetation_unit,
+        'influenceArea', s.influence_area, 'utmZone', p.utm_zone) AS station,
+      CASE WHEN e.start_geom IS NULL THEN NULL ELSE round(ST_Distance(e.start_geom::geography, s.geom::geography))::int END AS "distanceToStationM",
+      u.dni AS "specialistDni", m.form_schema AS "formSchema", m.photo_slots AS "photoSlots",
+      COALESCE(e.form_data->'records', '[]'::jsonb) AS "formRecords"
+    ${RECORDS_FROM}
+    JOIN projects p ON p.id = s.project_id
+    LEFT JOIN schedules sc ON sc.id = e.schedule_id
+    WHERE e.id = ${id}`)).rows[0] as Omit<RecordDetail, 'attachments' | 'incidentList'> | undefined;
+  if (!row) throw notFound('Registro');
+  const [attachments, incidentList] = await Promise.all([
+    db.execute(sql`
+      SELECT a.id, a.kind, a.slot_key AS "slotKey", a.mime_type AS "mimeType", ${iso(sql`a.taken_at`)} AS "takenAt", a.upload_status AS "uploadStatus",
+        (a.original_object_key IS NOT NULL AND a.original_upload_status = 'subido') AS "hasOriginal", a.duration_sec AS "durationSec",
+        ST_Y(a.geom) AS lat, ST_X(a.geom) AS lng, a.accuracy, a.caption
+      FROM attachments a WHERE a.owner_type = 'execution' AND a.owner_id = ${id}
+      ORDER BY CASE a.kind WHEN 'foto' THEN 0 WHEN 'foto_metodo' THEN 1 WHEN 'audio' THEN 2 ELSE 3 END, a.taken_at`),
+    db.execute(sql`
+      SELECT i.id, i.type, i.status, i.description, ${iso(sql`i.occurred_at`)} AS "occurredAt"
+      FROM incidents i JOIN executions e ON e.sampling_unit_id = i.sampling_unit_id
+      WHERE e.id = ${id} ORDER BY i.occurred_at DESC`),
+  ]);
+  return {
+    ...row,
+    attachments: attachments.rows as RecordDetail['attachments'],
+    incidentList: incidentList.rows as RecordDetail['incidentList'],
+  };
+}
+
 /**
  * Registros de campo (Fase 2): búsqueda de registros de campo con filtros y su detalle completo
  * (formulario, fotos, audios, alertas). Solo lectura para coordinación, supervisión y jefatura.
@@ -93,40 +129,7 @@ const recordsRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
-  r.get('/records/:id', { onRequest: read, schema: { params: idParam } }, async (req): Promise<RecordDetail> => {
-    const row = (await db.execute(sql`
-      SELECT ${ROW_COLUMNS},
-        e.observations, ${iso(sql`e.form_completed_at`)} AS "formCompletedAt", e.device_id AS "deviceId",
-        ST_Y(e.start_geom) AS "startLat", ST_X(e.start_geom) AS "startLng", e.start_accuracy AS "startAccuracy",
-        to_char(sc.planned_date, 'YYYY-MM-DD') AS "plannedDate", to_char(sc.original_date, 'YYYY-MM-DD') AS "originalDate",
-        json_build_object('lat', ST_Y(s.geom), 'lng', ST_X(s.geom), 'vegetationUnit', s.vegetation_unit,
-          'influenceArea', s.influence_area, 'utmZone', p.utm_zone) AS station,
-        CASE WHEN e.start_geom IS NULL THEN NULL ELSE round(ST_Distance(e.start_geom::geography, s.geom::geography))::int END AS "distanceToStationM",
-        u.dni AS "specialistDni", m.form_schema AS "formSchema", m.photo_slots AS "photoSlots",
-        COALESCE(e.form_data->'records', '[]'::jsonb) AS "formRecords"
-      ${RECORDS_FROM}
-      JOIN projects p ON p.id = s.project_id
-      LEFT JOIN schedules sc ON sc.id = e.schedule_id
-      WHERE e.id = ${req.params.id}`)).rows[0] as Omit<RecordDetail, 'attachments' | 'incidentList'> | undefined;
-    if (!row) throw notFound('Registro');
-    const [attachments, incidentList] = await Promise.all([
-      db.execute(sql`
-        SELECT a.id, a.kind, a.slot_key AS "slotKey", a.mime_type AS "mimeType", ${iso(sql`a.taken_at`)} AS "takenAt", a.upload_status AS "uploadStatus",
-          (a.original_object_key IS NOT NULL AND a.original_upload_status = 'subido') AS "hasOriginal", a.duration_sec AS "durationSec",
-          ST_Y(a.geom) AS lat, ST_X(a.geom) AS lng, a.accuracy, a.caption
-        FROM attachments a WHERE a.owner_type = 'execution' AND a.owner_id = ${req.params.id}
-        ORDER BY CASE a.kind WHEN 'foto' THEN 0 WHEN 'foto_metodo' THEN 1 WHEN 'audio' THEN 2 ELSE 3 END, a.taken_at`),
-      db.execute(sql`
-        SELECT i.id, i.type, i.status, i.description, ${iso(sql`i.occurred_at`)} AS "occurredAt"
-        FROM incidents i JOIN executions e ON e.sampling_unit_id = i.sampling_unit_id
-        WHERE e.id = ${req.params.id} ORDER BY i.occurred_at DESC`),
-    ]);
-    return {
-      ...row,
-      attachments: attachments.rows as RecordDetail['attachments'],
-      incidentList: incidentList.rows as RecordDetail['incidentList'],
-    };
-  });
+  r.get('/records/:id', { onRequest: read, schema: { params: idParam } }, async (req) => recordDetail(req.params.id));
 };
 
 export default recordsRoutes;

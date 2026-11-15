@@ -24,7 +24,8 @@ export function since(iso: string | null): { text: string; stale: boolean } {
 }
 
 /** Indicadores del documento de requerimientos (5.1). */
-export function MetricTiles({ m, brigades }: { m: TrackingMetrics; brigades?: number }) {
+/** `links`: los indicadores llevan a Alertas y Reprogramaciones (solo para coordinación). */
+export function MetricTiles({ m, brigades, links = true }: { m: TrackingMetrics; brigades?: number; links?: boolean }) {
   return (
     <div className="stats" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(165px, 1fr))', marginBottom: 16 }}>
       {brigades != null && <Tile label="Brigadas" value={`${brigades}`} />}
@@ -39,8 +40,8 @@ export function MetricTiles({ m, brigades }: { m: TrackingMetrics; brigades?: nu
         warn={(m.deviationPct ?? 0) > 10}
       />
       <Tile label="Estaciones atrasadas" value={`${m.stationsLate}`} warn={m.stationsLate > 0} hint="fecha vencida sin cerrar" />
-      <Tile label="Alertas activas" value={`${m.activeAlerts}`} warn={m.activeAlerts > 0} link="/alertas" />
-      <Tile label="Reprogramaciones pendientes" value={`${m.pendingReschedules}`} warn={m.pendingReschedules > 0} hint="unidades no realizadas sin nueva fecha" link="/alertas" />
+      <Tile label="Alertas activas" value={`${m.activeAlerts}`} warn={m.activeAlerts > 0} link={links ? '/alertas' : undefined} />
+      <Tile label="Reprogramaciones pendientes" value={`${m.pendingReschedules}`} warn={m.pendingReschedules > 0} hint="por aprobar o sin nueva fecha" link={links ? '/reprogramaciones' : undefined} />
     </div>
   );
 }

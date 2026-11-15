@@ -17,6 +17,7 @@ import { AlertsPage } from './pages/Alerts';
 import { InquiriesPage } from './pages/Inquiries';
 import { ReschedulesPage } from './pages/Reschedules';
 import { DocumentsPage } from './pages/Documents';
+import { MyRecordsPage } from './pages/MyRecords';
 import { LogisticsPage } from './pages/Logistics';
 import { TrackingPage } from './pages/Tracking';
 import { BrigadeTrackingPage } from './pages/BrigadeTracking';
@@ -38,7 +39,11 @@ export function App() {
     <ProjectProvider>
       <Routes>
         <Route element={<Layout />}>
-          <Route index element={<HomePage />} />
+          {/* El personal de campo entra directo a lo que cargó desde su teléfono. */}
+          <Route index element={viewer ? <HomePage /> : <Navigate to="/mis-registros" replace />} />
+          <Route path="mis-registros" element={<MyRecordsPage />} />
+          <Route path="mis-registros/:id" element={<RecordDetailPage mine />} />
+          <Route path="mi-brigada/:id" element={<BrigadeTrackingPage />} />
           {viewer && (
             <>
               <Route path="proyectos" element={<ProjectsPage />} />

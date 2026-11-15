@@ -1,10 +1,11 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams } from 'react-router';
 import {
-  BRIGADE_FLAG_LABELS, INCIDENT_STATUS_LABELS, INCIDENT_TYPE_LABELS, STATION_STATUS_LABELS,
+  BRIGADE_FLAG_LABELS, INCIDENT_STATUS_LABELS, WEB_ROLES, INCIDENT_TYPE_LABELS, STATION_STATUS_LABELS,
   type BrigadeTracking as Brigade, type IncidentStatus, type IncidentType, type MemberTracking, type StationStatus,
 } from '@toce/shared';
 import { api } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { ErrorBox } from '../components/Dialog';
 import { ProgressBar, ProgressChart } from '../components/ProgressChart';
 import { FLAG_CHIP, MetricTiles, since } from './Tracking';
@@ -27,6 +28,8 @@ const when = (iso: string) => new Date(iso).toLocaleString('es-PE', { timeZone: 
 /** Vista individual de una brigada (5.2): equipo, avance por estación, pendientes, desviaciones, sincronización y alertas. */
 export function BrigadeTrackingPage() {
   const { id } = useParams();
+  const { can } = useAuth();
+  const staff = can(...WEB_ROLES, 'jefe_proyecto');
   const q = useQuery({ queryKey: ['brigade-tracking', id], queryFn: () => api<Detail>(`/brigades/${id}/tracking`), refetchInterval: 60_000 });
   if (q.error) return <ErrorBox error={q.error} />;
   if (!q.data) return <div className="card empty">Calculando avance…</div>;
@@ -37,7 +40,7 @@ export function BrigadeTrackingPage() {
     <>
       <div className="page-head">
         <div>
-          <p><Link to="/seguimiento" className="back-link">← Avance de brigadas</Link></p>
+          <p>{staff ? <Link to="/seguimiento" className="back-link">← Avance de brigadas</Link> : <Link to="/mis-registros" className="back-link">← Mis registros</Link>}</p>
           <h1 style={{ display: 'flex', gap: 10, alignItems: 'center' }}>{b.name} <span className={FLAG_CHIP[b.flag]}>{BRIGADE_FLAG_LABELS[b.flag]}</span></h1>
           <p>
             {[b.specialtyName, b.leaderName && `Jefe: ${b.leaderName}`, b.supervisorName && `Supervisor: ${b.supervisorName}`, b.logisticianName && `Logístico: ${b.logisticianName}`]
@@ -46,7 +49,7 @@ export function BrigadeTrackingPage() {
         </div>
       </div>
 
-      <MetricTiles m={b.metrics} />
+      <MetricTiles m={b.metrics} links={staff} />
 
       <div className="split" style={{ gridTemplateColumns: 'minmax(0, 1.3fr) minmax(320px, 1fr)', marginBottom: 16 }}>
         <div className="card" style={{ padding: 16 }}>
@@ -139,7 +142,7 @@ export function BrigadeTrackingPage() {
           </div>
         </div>
         <div className="card">
-          <div className="toolbar"><strong>Alertas relacionadas</strong><Link to="/alertas" className="hint" style={{ marginLeft: 'auto' }}>Ir a Alertas →</Link></div>
+          <div className="toolbar"><strong>Alertas relacionadas</strong>{staff && <Link to="/alertas" className="hint" style={{ marginLeft: 'auto' }}>Ir a Alertas →</Link>}</div>
           <div className="list">
             {alerts.map((a) => (
               <div key={a.id} className="list-item" style={{ cursor: 'default', alignItems: 'flex-start' }}>

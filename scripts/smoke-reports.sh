@@ -70,7 +70,9 @@ check "ticket no sirve para otra ruta" "$(curl -s -o /dev/null -w '%{http_code}'
 check "ticket no sirve como sesión" "$(curl -s -o /dev/null -w '%{http_code}' "$B/projects/$PROJ/reports/daily" -H "authorization: Bearer $TK")" 401
 check "descarga sin sesión ni ticket: 401" "$(curl -s -o /dev/null -w '%{http_code}' "$B$P1")" 401
 check "especialista no ve reportes: 403" "$(curl -s -o /dev/null -w '%{http_code}' "$B/projects/$PROJ/reports/daily" -H "authorization: Bearer $ANA")" 403
-check "especialista no pide tickets: 403" "$(curl -s -o /dev/null -w '%{http_code}' -X POST $B/download-ticket -H "authorization: Bearer $ANA" -H 'content-type: application/json' -d "{\"path\":\"$P1\"}")" 403
+# El especialista pide tickets para sus propias descargas (Mis registros), pero no abren las de coordinación.
+ATK=$(curl -s -X POST $B/download-ticket -H "authorization: Bearer $ANA" -H 'content-type: application/json' -d "{\"path\":\"$P1\"}" | node -pe 'JSON.parse(require("fs").readFileSync(0)).ticket')
+check "ticket de especialista no abre reportes: 403" "$(curl -s -o /dev/null -w '%{http_code}' "$B$P1?ticket=$ATK")" 403
 
 echo
 [ $FAILS -eq 0 ] && echo "Todas las pruebas de reportes pasaron" || { echo "$FAILS pruebas fallaron"; exit 1; }

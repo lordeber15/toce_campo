@@ -163,13 +163,26 @@ La app abre la vista del rol principal: **Mi jornada** (especialista / jefe de b
   - LEEME.txt lista lo que sigue en los teléfonos.
 - **Subir documento**: actas, permisos, informes o planos, con brigada y estación opcionales. Se pueden borrar (queda en la auditoría). Las evidencias de campo no se borran.
 
+## Mis registros y Mi brigada (web · todos los roles)
+
+Cada persona entra a la web con su DNI y contraseña y ve **lo que cargó desde su teléfono**, para armar sus informes. El especialista y el logístico entran directo a esta página.
+
+- **Mis registros**: jornadas ordenadas como en la app (día → estación → método → unidad). Cada unidad abre su ficha: formulario, fotos con sello, notas de voz, GPS y alertas. Es solo lectura: se corrige desde el teléfono.
+  - Período: 7 días, 30 días, todo o un rango.
+  - **Excel de registros** y **Fotos y audios (ZIP)** en carpetas Brigada / Especialista / Estación / Método / Unidad.
+  - Pestañas: **alertas** (con la respuesta de coordinación y las reprogramaciones), **consultas de coordinación** y **logística** (logístico y jefe de brigada; viáticos con su total y comprobantes).
+- **Jefe de brigada**: en "Mis registros" elige **Lo mío** o **Brigada X** (registros, alertas, logística y descargas de toda su brigada). En **Mi brigada** ve el tablero de avance de su brigada: indicadores, curva, estaciones, pendientes, equipo y sincronización.
+- **Permisos**: cada uno ve solo lo suyo. El jefe ve solo su brigada. Las páginas de coordinación siguen cerradas al personal de campo.
+
 ## Estado y pendientes
 
 **Hecho:** Fase 1 (operación de campo), Fase 2 (supervisión web: avance, alertas, consultas, reprogramaciones, reportes y Excel) y sección 6 (documentos y evidencias).
 
 **Pendiente, en este orden:**
-1. Actualizar PostGIS (por confirmar: implica cambiar la imagen de la base de datos).
+1. Ficha imprimible en PDF (unidad o día) para los informes.
 2. Catálogo de especies (falta el Excel), al final.
+
+PostGIS en el VPS: 3.5.2 sobre Postgres 17 (revisado el 2026-11-14), al día; no requiere cambios.
 
 **Después (Fase 3, postergada por decisión del 2026-11-14):** transcripción de audios y extracción de información,
 clasificación de observaciones y validación con IA, cálculos estadísticos y gráficos, y reportes Word.
@@ -244,6 +257,7 @@ scripts/smoke-tracking.sh # avance de brigadas: indicadores, desviación, curva 
 scripts/smoke-records.sh # registros de campo: filtros, búsqueda por especie, ficha con formulario, fotos y permisos (solo lee)
 scripts/smoke-reports.sh # reportes: diario, Excel diario/consolidado/registros, ZIP de evidencias y tickets (usa y quita el avance de ejemplo)
 scripts/smoke-inquiries.sh # consultas: app, respuesta sin duplicar, llamadas registradas, adjuntos, cierre y permisos (borra lo que crea)
+scripts/smoke-mine.sh # mis registros y mi brigada: lo propio, la brigada del jefe, ficha, archivos, Excel/ZIP y permisos (solo lee)
 scripts/smoke-documents.sh # documentos y evidencias: contexto por origen, filtros, vista previa, ZIP en carpetas, carga/borrado y permisos (borra lo que crea)
 scripts/smoke-reschedules.sh # reprogramaciones: propuesta, evidencia, aprobación con ajuste, rechazo, historial, tablero, paquete y permisos (borra lo que crea)
 scripts/smoke-supervision-logistics.sh # supervisor y logístico: incidencias con solución, alertas de brigada, movilidad, apoyos, viáticos, muestras, equipos

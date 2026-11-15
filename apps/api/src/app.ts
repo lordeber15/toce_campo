@@ -26,6 +26,7 @@ import reports from './routes/reports.js';
 import inquiries from './routes/inquiries.js';
 import reschedules from './routes/reschedules.js';
 import documents from './routes/documents.js';
+import mine from './routes/mine.js';
 
 export async function buildApp() {
   const app = Fastify({
@@ -62,7 +63,7 @@ export async function buildApp() {
   await app.register(health, { prefix: '/api' });
   await app.register(auth, { prefix: '/api' });
   await app.register(users, { prefix: '/api' });
-  for (const routes of [methods, projects, brigades, stations, schedules, species, workPackage, field, basemap, incidents, logistics, tracking, records, reports, inquiries, reschedules, documents]) {
+  for (const routes of [methods, projects, brigades, stations, schedules, species, workPackage, field, basemap, incidents, logistics, tracking, records, reports, inquiries, reschedules, documents, mine]) {
     await app.register(routes, { prefix: '/api' });
   }
 

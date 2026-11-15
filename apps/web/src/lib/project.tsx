@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { WEB_ROLES, type MyOverview } from '@toce/shared';
 import { api } from './api';
+import { useAuth } from './auth';
 
 export type Project = {
   id: string; code: string; name: string; client: string | null; status: string;
@@ -13,7 +15,16 @@ type Ctx = { projects: Project[]; project: Project | null; setProjectId: (id: st
 const ProjectContext = createContext<Ctx | null>(null);
 
 export function ProjectProvider({ children }: { children: ReactNode }) {
-  const q = useQuery({ queryKey: ['projects'], queryFn: () => api<Project[]>('/projects') });
+  const { can } = useAuth();
+  const staff = can(...WEB_ROLES, 'jefe_proyecto');
+  // Coordinación ve todos los proyectos; el personal de campo, solo en los que participa.
+  const q = useQuery({
+    queryKey: ['projects', staff],
+    queryFn: async () => (staff ? api<Project[]>('/projects')
+      : (await api<MyOverview>('/me/overview')).projects.map((p) => ({
+        ...p, client: null, status: 'activo', startDate: null, endDate: null, utmZone: null, brigades: 0, stations: 0, schedules: 0, layers: 0,
+      }))),
+  });
   const [projectId, setId] = useState<string | null>(() => {
     try { return localStorage.getItem(KEY); } catch { return null; }
   });

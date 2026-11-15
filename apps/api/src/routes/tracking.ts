@@ -2,10 +2,10 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from '@fastify/type-provider-zod';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { WEB_ROLES } from '@toce/shared';
+import { WEB_ROLES, hasAnyRole } from '@toce/shared';
 import { db } from '../db/index.js';
 import { computeTracking } from '../lib/tracking.js';
-import { idParam, notFound, projectParam } from '../lib/http.js';
+import { HttpError, idParam, notFound, projectParam } from '../lib/http.js';
 
 const dateQuery = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() });
 
@@ -20,9 +20,15 @@ const trackingRoutes: FastifyPluginAsync = async (app) => {
   r.get('/projects/:projectId/tracking', { onRequest: read, schema: { params: projectParam, querystring: dateQuery } }, async (req) =>
     computeTracking(req.params.projectId, { today: req.query.date }));
 
-  r.get('/brigades/:id/tracking', { onRequest: read, schema: { params: idParam, querystring: dateQuery } }, async (req) => {
-    const b = (await db.execute(sql`SELECT project_id AS "projectId" FROM brigades WHERE id = ${req.params.id}`)).rows[0] as { projectId: string } | undefined;
+  // Coordinación, supervisión y jefatura; y el jefe de esa brigada (su tablero de seguimiento).
+  r.get('/brigades/:id/tracking', { onRequest: app.authenticate, schema: { params: idParam, querystring: dateQuery } }, async (req) => {
+    const b = (await db.execute(sql`SELECT project_id AS "projectId", leader_id AS "leaderId" FROM brigades WHERE id = ${req.params.id}`)).rows[0] as
+      | { projectId: string; leaderId: string | null }
+      | undefined;
     if (!b) throw notFound('Brigada');
+    if (!hasAnyRole(req.user.roles, [...WEB_ROLES, 'jefe_proyecto']) && b.leaderId !== req.user.sub) {
+      throw new HttpError(403, 'Solo el jefe de esta brigada o coordinación ven este tablero');
+    }
     const t = await computeTracking(b.projectId, { today: req.query.date, brigadeId: req.params.id });
     const brigade = t.brigades[0]!;
     const alerts = (await db.execute(sql`

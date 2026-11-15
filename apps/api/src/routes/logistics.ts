@@ -65,7 +65,7 @@ function value(kind: Kind, v: unknown): SQL {
 }
 
 /** Expresión SELECT que devuelve cada columna con la forma del JSON del teléfono. */
-function selectData(entity: LogisticsEntity, alias = 't'): SQL {
+export function selectData(entity: LogisticsEntity, alias = 't'): SQL {
   const parts = LOGISTICS_TABLES[entity].cols.map(([key, col, kind]) => {
     const c = `${alias}.${col}`;
     const expr = kind === 'date' ? `to_char(${c}, 'YYYY-MM-DD')` : kind === 'num' ? `${c}::float8` : kind === 'ts' ? `to_char(${c} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')` : c;

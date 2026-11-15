@@ -4,9 +4,10 @@ import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'reac
 import {
   EXECUTION_STATUSES, EXECUTION_STATUS_LABELS, INCIDENT_STATUS_LABELS, INCIDENT_TYPE_LABELS, formatUtm, latLngToUtm,
   type ExecutionStatus, type FormField, type IncidentStatus, type IncidentType, type RecordAttachment, type RecordDetail,
-  type RecordFilterOptions, type RecordsPage,
+  type RecordFilterOptions, type RecordsPage, WEB_ROLES,
 } from '@toce/shared';
 import { api, download } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { useProject } from '../lib/project';
 import { ErrorBox, NoProject } from '../components/Dialog';
 
@@ -196,10 +197,13 @@ function Select({ label, value, onChange, options }: { label: string; value?: st
 }
 
 /** Ficha de una unidad de muestreo ejecutada: contexto, ubicación, formulario, fotos, audios y alertas. */
-export function RecordDetailPage() {
+/** `mine`: abierta desde "Mis registros" (especialista o jefe de brigada), con sus propios permisos. */
+export function RecordDetailPage({ mine = false }: { mine?: boolean }) {
   const { id } = useParams();
-  const back = (useLocation().state as { back?: string } | null)?.back ?? '/registros';
-  const q = useQuery({ queryKey: ['record', id], queryFn: () => api<RecordDetail>(`/records/${id}`) });
+  const { can } = useAuth();
+  const staff = can(...WEB_ROLES, 'jefe_proyecto');
+  const back = (useLocation().state as { back?: string } | null)?.back ?? (mine ? '/mis-registros' : '/registros');
+  const q = useQuery({ queryKey: ['record', mine, id], queryFn: () => api<RecordDetail>(mine ? `/me/records/${id}` : `/records/${id}`) });
   if (q.error) return <ErrorBox error={q.error} />;
   if (!q.data) return <div className="card empty">Cargando registro…</div>;
   const d = q.data;
@@ -215,7 +219,7 @@ export function RecordDetailPage() {
     <>
       <div className="page-head">
         <div>
-          <p><Link to={back} className="back-link">← Registros de campo</Link></p>
+          <p><Link to={back} className="back-link">← {mine ? 'Mis registros' : 'Registros de campo'}</Link></p>
           <h1>{d.unitCode}</h1>
           <p>{d.methodCode} · {d.methodName} · <span className={STATUS_CHIP[d.status]}>{EXECUTION_STATUS_LABELS[d.status]}</span></p>
         </div>
@@ -322,7 +326,7 @@ export function RecordDetailPage() {
             <p key={i.id} style={{ margin: '6px 0' }}>
               <span className="chip">{INCIDENT_STATUS_LABELS[i.status as IncidentStatus]}</span>
               <strong>{INCIDENT_TYPE_LABELS[i.type as IncidentType]}</strong> · {when(i.occurredAt)} — {i.description}{' '}
-              <Link to="/alertas" className="hint">ver en Alertas</Link>
+              {staff && <Link to="/alertas" className="hint">ver en Alertas</Link>}
             </p>
           ))}
         </div>
