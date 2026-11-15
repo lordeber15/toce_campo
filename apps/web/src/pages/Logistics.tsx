@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
-  EQUIPMENT_STATUS_LABELS, EXPENSE_CATEGORY_LABELS, LOGISTICS_ENTITIES, LOGISTICS_ENTITY_LABELS, SAMPLE_PENDING, SAMPLE_STATUS_LABELS,
+  EQUIPMENT_STATUS_LABELS, EXPENSE_CATEGORY_LABELS, RECEPTION_STATUS_LABELS, LOGISTICS_ENTITIES, LOGISTICS_ENTITY_LABELS, SAMPLE_PENDING, SAMPLE_STATUS_LABELS,
   VEHICLE_STATUS_LABELS,
   type EquipmentData, type ExpenseData, type LogisticsData, type LogisticsEntity, type SampleData, type SupportData, type VehicleData,
 } from '@toce/shared';
@@ -46,6 +46,9 @@ export function LogisticsPage() {
   const noReceipt = expenses.filter((r) => !r.data.receiptNumber && !r.files.length).length;
   const pending = samples.filter((r) => SAMPLE_PENDING.includes(r.data.status)).length;
   const badEquip = equipment.filter((r) => r.data.status !== 'operativo').length;
+  const toReceive = equipment.filter((r) => r.data.receptionStatus === 'por_recibir').length;
+  const incomplete = equipment.filter((r) => r.data.receptionStatus === 'incompleto').length;
+  const tolls = expenses.filter((r) => r.data.category === 'peajes').reduce((a, r) => a + r.data.amount, 0);
   const badVeh = vehicles.filter((r) => r.data.status === 'averiada' || r.data.status === 'accidente').length;
 
   return (
@@ -53,15 +56,16 @@ export function LogisticsPage() {
       <div className="page-head">
         <div>
           <h1>Logística</h1>
-          <p>Movilidad, apoyos locales, viáticos, muestras y equipos registrados en campo para {project.code}. Las incidencias logísticas llegan a Alertas.</p>
+          <p>Movilidad, apoyos locales, viáticos, muestras, equipos y materiales registrados en campo para {project.code}. Las incidencias logísticas llegan a Alertas.</p>
         </div>
       </div>
       <div className="stats" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', marginBottom: 16 }}>
         <Stat label="Movilidades" value={`${vehicles.filter((r) => r.data.status === 'llegada').length}/${vehicles.length}`} hint={badVeh ? `${badVeh} con problema` : 'llegaron'} warn={badVeh > 0} />
         <Stat label="Apoyos disponibles" value={`${support.filter((r) => r.data.isAvailable).length}`} hint={`de ${support.length} registrados`} />
-        <Stat label="Viáticos" value={money(total)} hint={noReceipt ? `${noReceipt} sin comprobante` : `${expenses.length} gastos`} warn={noReceipt > 0} />
+        <Stat label="Viáticos" value={money(total)} hint={[noReceipt ? `${noReceipt} sin comprobante` : `${expenses.length} gastos`, tolls ? `peajes ${money(tolls)}` : ''].filter(Boolean).join(' · ')} warn={noReceipt > 0} />
         <Stat label="Muestras por enviar" value={`${pending}`} hint={`${samples.length} registradas`} warn={pending > 0} />
         <Stat label="Equipos con problemas" value={`${badEquip}`} hint={`${equipment.length} registrados`} warn={badEquip > 0} />
+        <Stat label="Recepción de materiales" value={`${toReceive}`} hint={`por recibir${incomplete ? ` · ${incomplete} incompletos` : ''}`} warn={incomplete > 0} />
       </div>
 
       <div className="card">
@@ -154,13 +158,23 @@ export function LogisticsPage() {
               </Table>
             )}
             {tab === 'equipment' && (
-              <Table head={['Brigada', 'Equipo', 'Serie', 'Cant.', 'Estado', 'Observaciones', 'Fotos']} empty={!equipment.length}>
+              <Table head={['Brigada', 'Equipo o material', 'Serie', 'Cant.', 'Estado', 'Recepción', 'Observaciones', 'Fotos']} empty={!equipment.length}>
                 {equipment.map((r) => {
                   const v: EquipmentData = r.data;
                   return (
                     <tr key={r.id}>
                       <td>{r.brigadeName}</td><td>{v.name}</td><td>{v.serial ?? '—'}</td><td>{v.quantity}</td>
                       <td><span className={v.status === 'operativo' ? 'chip chip-ok' : v.status === 'en_reparacion' ? 'chip chip-warn' : 'chip chip-off'}>{EQUIPMENT_STATUS_LABELS[v.status]}</span></td>
+                      <td className="wrap">
+                        {v.receptionStatus ? (
+                          <>
+                            <span className={v.receptionStatus === 'recibido' ? 'chip chip-ok' : v.receptionStatus === 'incompleto' ? 'chip chip-off' : 'chip chip-warn'}>
+                              {RECEPTION_STATUS_LABELS[v.receptionStatus]}{v.receptionStatus === 'incompleto' && v.receivedQuantity != null ? ` (${v.receivedQuantity}/${v.quantity})` : ''}
+                            </span>
+                            {v.receivedAt && <small className="hint"> {dt(v.receivedAt)}{v.receivedBy ? ` · ${v.receivedBy}` : ''}</small>}
+                          </>
+                        ) : '—'}
+                      </td>
                       <td className="wrap">{v.notes ?? '—'}</td><td><Files files={r.files} /></td>
                     </tr>
                   );

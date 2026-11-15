@@ -25,7 +25,7 @@ type ExecRow = { brigadeId: string | null; stationId: string; methodId: string; 
 
 const pct = (a: number, b: number) => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
 
-function metrics(stations: StationTracking[], today: string, extra: { activeAlerts: number; pendingReschedules: number }): TrackingMetrics {
+function metrics(stations: StationTracking[], today: string, extra: { activeAlerts: number; criticalAlerts: number; pendingReschedules: number }): TrackingMetrics {
   const due = stations.filter((s) => s.firstDate <= today);
   const sum = (xs: StationTracking[], k: 'required' | 'done' | 'notDone') => xs.reduce((a, s) => a + s[k], 0);
   const executed = stations.reduce((a, s) => a + s.executedUnits, 0);
@@ -109,15 +109,16 @@ export async function computeTracking(projectId: string, opts: { today?: string;
   const incidents = (await db.execute(sql`
     SELECT i.brigade_id AS "brigadeId", i.station_id AS "stationId",
       (i.status IN ('abierta', 'en_revision')) AS active,
+      (i.is_critical AND i.status <> 'cerrada') AS critical,
       (i.status IN ('abierta', 'en_revision') AND NOT EXISTS (SELECT 1 FROM reschedules r WHERE r.incident_id = i.id)
         AND (i.proposed_action ILIKE '%reprogram%' OR EXISTS (
           SELECT 1 FROM sampling_units su WHERE su.id = i.sampling_unit_id AND su.status = 'no_realizada'))) AS "needsReschedule"
     FROM incidents i WHERE i.project_id = ${projectId}
     UNION ALL
     -- Propuestas de reprogramación esperando aprobación.
-    SELECT sc.brigade_id, sc.station_id, false, true
+    SELECT sc.brigade_id, sc.station_id, false, false, true
     FROM reschedules r JOIN schedules sc ON sc.id = r.schedule_id
-    WHERE sc.project_id = ${projectId} AND r.status = 'propuesta'`)).rows as { brigadeId: string | null; stationId: string | null; active: boolean; needsReschedule: boolean }[];
+    WHERE sc.project_id = ${projectId} AND r.status = 'propuesta'`)).rows as { brigadeId: string | null; stationId: string | null; active: boolean; critical: boolean; needsReschedule: boolean }[];
 
   const memberRows = (await db.execute(sql`
     SELECT x.brigade_id AS "brigadeId", u.id, u.full_name AS "fullName", sp.code AS "specialtyCode", x.role, u.phone,
@@ -189,7 +190,7 @@ export async function computeTracking(projectId: string, opts: { today?: string;
   const brigadeList: BrigadeTracking[] = brigades.map((b) => {
     const st = stations.filter((s) => s.brigadeId === b.id);
     const inc = incidents.filter((i) => i.brigadeId === b.id);
-    const m = metrics(st, today, { activeAlerts: inc.filter((i) => i.active).length, pendingReschedules: inc.filter((i) => i.needsReschedule).length });
+    const m = metrics(st, today, { activeAlerts: inc.filter((i) => i.active).length, criticalAlerts: inc.filter((i) => i.critical).length, pendingReschedules: inc.filter((i) => i.needsReschedule).length });
     const members = memberRows.filter((x) => x.brigadeId === b.id).map(({ brigadeId: _b, ...x }) => x);
     const field = members.filter((x) => x.role === 'jefe' || x.role === 'miembro');
     const lastSyncAt = field.map((x) => x.lastSyncAt).filter(Boolean).sort().pop() ?? null;
@@ -224,6 +225,7 @@ export async function computeTracking(projectId: string, opts: { today?: string;
 
   const all = metrics(stations, today, {
     activeAlerts: incidents.filter((i) => i.active && (!opts.brigadeId || i.brigadeId === opts.brigadeId)).length,
+    criticalAlerts: incidents.filter((i) => i.critical && (!opts.brigadeId || i.brigadeId === opts.brigadeId)).length,
     pendingReschedules: incidents.filter((i) => i.needsReschedule && (!opts.brigadeId || i.brigadeId === opts.brigadeId)).length,
   });
   return { today, metrics: { ...all, brigades: brigades.length }, brigades: brigadeList, curve };

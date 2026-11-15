@@ -22,6 +22,8 @@ export type TrackingMetrics = {
   compliancePct: number | null;
   deviationPct: number | null;
   activeAlerts: number;
+  /** Alertas marcadas como críticas que aún no se cierran. */
+  criticalAlerts: number;
   pendingReschedules: number;
 };
 

@@ -129,6 +129,18 @@ const MIGRATIONS: string[] = [
      synced INTEGER NOT NULL DEFAULT 0,   -- 0 por enviar · 1 enviada · 2 rechazada por el servidor
      sync_error TEXT
    );`,
+  // Supervisor: coordinaciones con el equipo técnico al atender una incidencia (por enviar).
+  `CREATE TABLE IF NOT EXISTS incident_coordinations_out (
+     client_id TEXT PRIMARY KEY NOT NULL,
+     user_id TEXT NOT NULL,
+     incident_client_id TEXT NOT NULL,
+     with_whom TEXT NOT NULL,
+     channel TEXT NOT NULL,
+     agreement TEXT NOT NULL,
+     occurred_at TEXT NOT NULL,
+     synced INTEGER NOT NULL DEFAULT 0,   -- 0 por enviar · 1 enviada · 2 rechazada por el servidor
+     sync_error TEXT
+   );`,
 ];
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;

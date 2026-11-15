@@ -10,7 +10,8 @@ check() { [ "$2" = "$3" ] && echo "  OK   $1" || { echo "  FAIL $1: esperado [$3
 token() { curl -s -X POST $B/auth/login -H 'content-type: application/json' -d "{\"dni\":\"$1\",\"password\":\"Toce2026\"}" | js 'p.accessToken'; }
 js() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s);console.log(eval(process.argv[1]))})' "$1"; }
 uuid() { node -e 'console.log(crypto.randomUUID())'; }
-psql() { docker exec toce-postgres psql -U toce -d toce -tAc "$1"; }
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+psql() { if [ -n "${USE_DOCKER:-}" ]; then docker exec toce-postgres psql -U toce -d toce -tAc "$1"; else node "$ROOT/scripts/lib/sql.cjs" "$1"; fi; }
 post() { curl -s -X POST "$B$1" -H "authorization: Bearer $2" -H 'content-type: application/json' -d "$3"; }
 code() { curl -s -o /dev/null -w '%{http_code}' -X POST "$B$1" -H "authorization: Bearer $2" -H 'content-type: application/json' -d "$3"; }
 NOW=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
@@ -24,6 +25,7 @@ PROJ=$(echo "$PKG" | js 'p.projects[0].id')
 STATION=$(echo "$PKG" | js "p.schedules.find(s=>s.brigadeId==='$BRIG').stationId")
 S1=$(uuid); S2=$(uuid); A1=$(uuid); L1=$(uuid)
 V=$(uuid); P=$(uuid); E=$(uuid); M=$(uuid); Q=$(uuid); F=$(uuid)
+T=$(uuid); R2=$(uuid); L2=$(uuid); F2=$(uuid); E2=$(uuid)
 
 echo "Supervisor de campo"
 check "paquete del supervisor con sus brigadas" "$(echo "$PKG" | js 'p.brigades.length>0 && p.schedules.length>0 && p.units.length>0')" true
@@ -60,6 +62,20 @@ check "web muestra lo documentado por el supervisor" "$(echo "$D" | js 'p.launch
 post "/incidents/$S1_ID/decision" "$COO" '{"decision":"aprobada","response":"Conforme","correctiveAction":"Reforzar capacitación"}' >/dev/null
 check "coordinación responde sin borrar la acción de campo" "$(psql "select field_corrective_action||'|'||corrective_action from incidents where id='$S1_ID'")" "Se reubicaron las trampas a 10 m|Reforzar capacitación"
 
+echo "Coordinaciones con el equipo técnico"
+C1=$(uuid)
+CO="{\"clientId\":\"$C1\",\"withWhom\":\"Ana Aves (jefa de brigada)\",\"channel\":\"presencial\",\"agreement\":\"Repetir PC-03 y PC-04 mañana a las 6:00\",\"occurredAt\":\"$NOW\"}"
+check "registra coordinación en su incidencia (aun ya respondida)" "$(code "/field/incidents/$S1/coordinations" "$SOF" "$CO")" 201
+check "reenvío sin señal no duplica" "$(code "/field/incidents/$S1/coordinations" "$SOF" "$CO")" 200
+CO2="{\"clientId\":\"$(uuid)\",\"withWhom\":\"Coordinación\",\"channel\":\"radio\",\"agreement\":\"Se envía GPS de respaldo con la movilidad\",\"occurredAt\":\"$NOW\"}"
+check "y en la alerta de un integrante de su brigada" "$(code "/field/incidents/$A1/coordinations" "$SOF" "$CO2")" 201
+check "el especialista no registra coordinaciones en incidencias ajenas: 403" "$(code "/field/incidents/$S1/coordinations" "$ANA" "$CO2")" 403
+check "incidencia aún no sincronizada: 409" "$(code "/field/incidents/$(uuid)/coordinations" "$SOF" "$CO2")" 409
+check "sin con quién: 400" "$(code "/field/incidents/$S1/coordinations" "$SOF" "{\"clientId\":\"$(uuid)\",\"withWhom\":\"\",\"agreement\":\"x y z\",\"occurredAt\":\"$NOW\"}")" 400
+check "el supervisor la ve en su teléfono" "$(curl -s "$B/field/incidents/mine" -H "authorization: Bearer $SOF" | js "p.find(i=>i.clientId==='$S1').coordinations.map(c=>c.channel+':'+c.withWhom).join()")" "presencial:Ana Aves (jefa de brigada)"
+check "y en la alerta de la brigada" "$(curl -s "$B/field/incidents/brigades" -H "authorization: Bearer $SOF" | js "p.find(i=>i.clientId==='$A1').coordinations.length")" 1
+check "coordinación (web) las ve en el detalle" "$(curl -s "$B/incidents/$S1_ID" -H "authorization: Bearer $COO" | js 'p.coordinations.map(c=>c.agreement+"|"+c.authorName).join()')" "Repetir PC-03 y PC-04 mañana a las 6:00|Sofía Supervisora"
+
 echo "Responsable logístico"
 veh() { echo "{\"clientId\":\"$V\",\"brigadeId\":\"$BRIG\",\"description\":\"Camioneta 4x4\",\"plate\":\"ABC-123\",\"driverName\":\"Juan Pérez\",\"status\":\"$1\",\"arrivedAt\":$2,\"missingMaterials\":[\"Botiquín\"],\"defectiveMaterials\":[],\"clientUpdatedAt\":\"$3\"}"; }
 check "registra movilidad" "$(post /field/logistics/vehicle "$LUI" "$(veh en_ruta null "$NOW")" | js 'p.applied')" true
@@ -91,17 +107,54 @@ W=$(curl -s "$B/projects/$PROJ/logistics" -H "authorization: Bearer $COO")
 check "web: logística del proyecto" "$(echo "$W" | js "p.vehicle.length>0 && p.expense.find(x=>x.data.clientId==='$E').files.length")" 1
 check "especialista no ve la logística web: 403" "$(curl -s -o /dev/null -w '%{http_code}' "$B/projects/$PROJ/logistics" -H "authorization: Bearer $ANA")" 403
 
+echo "Peajes, recepción de materiales e incidencia logística"
+BODY="{\"clientId\":\"$T\",\"brigadeId\":\"$BRIG\",\"category\":\"peajes\",\"description\":\"Peaje Corcona\",\"amount\":12.5,\"expenseDate\":\"$TODAY\",\"receiptNumber\":\"P-889\",\"clientUpdatedAt\":\"$NOW\"}"
+check "gasto de peajes" "$(post /field/logistics/expense "$LUI" "$BODY" | js 'p.applied')" true
+check "peaje guardado" "$(psql "select category||':'||amount from logistics_expenses where client_id='$T'")" "peajes:12.50"
+check "equipo enviado sin recepción (teléfonos anteriores)" "$(psql "select coalesce(reception_status,'-') from logistics_equipment where client_id='$Q'")" "-"
+BODY="{\"clientId\":\"$R2\",\"brigadeId\":\"$BRIG\",\"name\":\"Trampas Sherman\",\"quantity\":10,\"status\":\"operativo\",\"receptionStatus\":\"por_recibir\",\"clientUpdatedAt\":\"$NOW\"}"
+check "material por recibir" "$(post /field/logistics/equipment "$LUI" "$BODY" | js 'p.applied')" true
+BODY="{\"clientId\":\"$R2\",\"brigadeId\":\"$BRIG\",\"name\":\"Trampas Sherman\",\"quantity\":10,\"status\":\"operativo\",\"receptionStatus\":\"incompleto\",\"receivedAt\":\"$LATER\",\"receivedBy\":\"Luis Logístico\",\"receivedQuantity\":8,\"clientUpdatedAt\":\"$LATER\"}"
+post /field/logistics/equipment "$LUI" "$BODY" >/dev/null
+check "recepción: estado, fecha, quién y cuánto" "$(psql "select reception_status||':'||(received_at is not null)::text||':'||received_by||':'||received_quantity from logistics_equipment where client_id='$R2'")" "incompleto:true:Luis Logístico:8"
+BODY="{\"clientId\":\"$(uuid)\",\"brigadeId\":\"$BRIG\",\"name\":\"X\",\"status\":\"operativo\",\"receptionStatus\":\"llego\",\"clientUpdatedAt\":\"$NOW\"}"
+check "estado de recepción inválido: 400" "$(code /field/logistics/equipment "$LUI" "$BODY")" 400
+check "el teléfono recupera la recepción" "$(curl -s "$B/field/logistics" -H "authorization: Bearer $LUI" | js "const d=p.find(r=>r.data.clientId==='$R2').data;d.receptionStatus+':'+d.receivedBy+':'+d.receivedQuantity+':'+(d.receivedAt==='$LATER')")" "incompleto:Luis Logístico:8:true"
+check "web: recepción en la logística del proyecto" "$(curl -s "$B/projects/$PROJ/logistics" -H "authorization: Bearer $COO" | js "p.equipment.find(x=>x.data.clientId==='$R2').data.receptionStatus+':'+p.expense.find(x=>x.data.clientId==='$T').data.category")" "incompleto:peajes"
+BODY="{\"clientId\":\"$L2\",\"brigadeId\":\"$BRIG\",\"type\":\"falta_materiales\",\"launchedFrom\":\"logistica\",\"description\":\"Llegaron 8 de 10 trampas Sherman\",\"occurredAt\":\"$NOW\",\"clientUpdatedAt\":\"$NOW\"}"
+check "incidencia por falta de materiales" "$(post /field/incidents "$LUI" "$BODY" | js 'p.status')" abierta
+BODY="{\"clientId\":\"$F2\",\"incidentClientId\":\"$L2\",\"kind\":\"foto\",\"mimeType\":\"image/jpeg\",\"takenAt\":\"$NOW\"}"
+check "con foto de evidencia" "$(post /field/attachments "$LUI" "$BODY" | js 'p.uploadStatus')" pendiente
+check "coordinación la ve con su foto" "$(curl -s "$B/projects/$PROJ/incidents?type=falta_materiales" -H "authorization: Bearer $COO" | js "const i=p.find(x=>x.launchedFrom==='logistica');!!i && i.files===1")" true
+
+echo "Jefe de brigada que también es logístico"
+ANA_ID=$(psql "select id from users where dni='20000001'")
+ABRIG=$(psql "select id from brigades where leader_id='$ANA_ID' and is_active limit 1")
+OLD_LOG=$(psql "select coalesce(logistician_id::text,'') from brigades where id='$ABRIG'")
+psql "update users set roles = array_append(roles, 'logistico'::role) where id='$ANA_ID' and not ('logistico'::role = any(roles)); update brigades set logistician_id='$ANA_ID' where id='$ABRIG'" >/dev/null
+ANA2=$(token 20000001)
+check "su sesión trae ambos roles" "$(curl -s -X POST $B/auth/login -H 'content-type: application/json' -d '{"dni":"20000001","password":"Toce2026"}' | js "['jefe_brigada','logistico'].every(r=>p.user.roles.includes(r))")" true
+APKG=$(curl -s "$B/work-package" -H "authorization: Bearer $ANA2")
+check "paquete: jefe y logístico de su brigada" "$(echo "$APKG" | js "const b=p.brigades.find(x=>x.id==='$ABRIG');b.myRoles.includes('jefe')&&b.myRoles.includes('logistico')")" true
+check "sigue con sus unidades (jornada)" "$(echo "$APKG" | js 'p.units.length>0 && p.schedules.length>0')" true
+BODY="{\"clientId\":\"$E2\",\"brigadeId\":\"$ABRIG\",\"category\":\"peajes\",\"description\":\"Peaje Ticlio\",\"amount\":8,\"expenseDate\":\"$TODAY\",\"clientUpdatedAt\":\"$NOW\"}"
+check "registra logística de su brigada" "$(post /field/logistics/expense "$ANA2" "$BODY" | js 'p.applied')" true
+check "y la recupera en el teléfono" "$(curl -s "$B/field/logistics" -H "authorization: Bearer $ANA2" | js "p.some(r=>r.data.clientId==='$E2')")" true
+check "en otra brigada no: 403" "$(code /field/logistics/expense "$ANA2" "$(echo "$BODY" | sed "s/$ABRIG/$BRIG/")")" 403
+psql "update users set roles = array_remove(roles, 'logistico'::role) where id='$ANA_ID'; update brigades set logistician_id=$( [ -n "$OLD_LOG" ] && echo "'$OLD_LOG'" || echo NULL ) where id='$ABRIG'" >/dev/null
+check "roles restaurados" "$(psql "select ('logistico'::role = any(roles))::text from users where id='$ANA_ID'")" false
+
 # Limpieza.
-IDS="'$S1','$S2','$A1','$L1'"
-LOG="'$V','$P','$E','$M','$Q'"
+IDS="'$S1','$S2','$A1','$L1','$L2'"
+LOG="'$V','$P','$E','$M','$Q','$T','$R2','$E2'"
 psql "
-  delete from attachments where client_id='$F';
+  delete from attachments where client_id in ('$F','$F2');
   delete from audit_logs where entity_id::text in (select id::text from incidents where client_id in ($IDS))
     or entity like 'logistics_%' and after->>'clientId' in ($LOG);
   delete from incidents where client_id in ($IDS);
   delete from logistics_vehicles where client_id='$V'; delete from logistics_support_staff where client_id='$P';
   delete from logistics_expenses where client_id='$E'; delete from logistics_samples where client_id='$M';
-  delete from logistics_equipment where client_id='$Q';" >/dev/null
+  delete from logistics_equipment where client_id in ('$Q','$R2'); delete from logistics_expenses where client_id in ('$T','$E2');" >/dev/null
 
 echo
 [ $FAILS -eq 0 ] && echo "Todas las pruebas de supervisión y logística pasaron" || { echo "$FAILS pruebas fallaron"; exit 1; }

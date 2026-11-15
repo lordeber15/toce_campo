@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import {
   ADMIN_ROLES, INCIDENT_DECISION_LABELS, INCIDENT_MOMENT_LABELS, INCIDENT_ORIGIN_LABELS, INCIDENT_STATUS_LABELS, INCIDENT_STATUSES,
-  INCIDENT_TYPE_LABELS, INCIDENT_TYPES, RESCHEDULE_APPROVER_ROLES,
+  COORDINATION_CHANNEL_LABELS, CRITICAL_MARKER_ROLES, INCIDENT_TYPE_LABELS, INCIDENT_TYPES, RESCHEDULE_APPROVER_ROLES, type IncidentCoordinationDto,
+  type IncidentFollowUpDto,
   type IncidentDecision, type IncidentMessageKind, type IncidentMoment, type IncidentOrigin, type IncidentStatus, type IncidentType,
 } from '@toce/shared';
 import { api } from '../lib/api';
@@ -16,6 +17,7 @@ type Row = {
   occurredAt: string; coordinationDecision: IncidentDecision | null; updatedAt: string; reportedBy: string; brigadeName: string | null;
   stationCode: string | null; methodCode: string | null; unitCode: string | null; files: number; messages: number; lastReplyAt: string | null;
   launchedFrom: IncidentOrigin | null; fieldResolved: boolean;
+  isCritical: boolean; followUpOwnerName: string | null; followUpDueDate: string | null;
 };
 type Message = { id: string; authorId: string; authorName: string; body: string; kind: IncidentMessageKind; sentAt: string };
 type FileRow = { id: string; kind: string; mimeType: string; takenAt: string; uploadStatus: string; durationSec: number | null };
@@ -24,6 +26,9 @@ type Detail = Row & {
   resolvedAt: string | null; resolvedByName: string | null; reportedById: string; reporterPhone: string | null; stationId: string | null;
   influenceArea: string | null; vegetationUnit: string | null; methodName: string | null; unitStatus: string | null; scheduleId: string | null;
   messages: Message[]; files: FileRow[]; reschedules: { fromDate: string; toDate: string; reason: string; status: string; approvedByName: string | null }[];
+  coordinations: IncidentCoordinationDto[];
+  criticalReason: string | null; criticalAt: string | null; criticalByName: string | null; followUpOwnerId: string | null;
+  followUps: IncidentFollowUpDto[]; assignees: { id: string; fullName: string }[];
   schedules: { id: string; plannedDate: string; status: string; brigadeName: string }[];
 };
 
@@ -47,7 +52,11 @@ export function AlertsPage() {
   const [type, setType] = useState<IncidentType | ''>('');
   const [origin, setOrigin] = useState<Origin | ''>('');
   const [selected, setSelected] = useState<string | null>(null);
-  const qs = new URLSearchParams({ ...(status ? { status } : {}), ...(type ? { type } : {}) }).toString();
+  // ?critica=1: solo las alertas marcadas como críticas (enlace desde Avance).
+  const [params, setParams] = useSearchParams();
+  const critical = params.get('critica') === '1';
+  const setCritical = (on: boolean) => { setParams(on ? { critica: '1' } : {}, { replace: true }); setSelected(null); };
+  const qs = new URLSearchParams({ ...(status ? { status } : {}), ...(type ? { type } : {}), ...(critical ? { critical: '1' } : {}) }).toString();
   const list = useQuery({
     queryKey: ['incidents', project?.id, qs],
     enabled: !!project,
@@ -61,6 +70,7 @@ export function AlertsPage() {
   if (!project) return <NoProject />;
   const open = rows.filter((r) => r.status === 'abierta').length;
   const review = rows.filter((r) => r.status === 'en_revision').length;
+  const criticalOpen = rows.filter((r) => r.isCritical && r.status !== 'cerrada').length;
 
   return (
     <>
@@ -73,6 +83,13 @@ export function AlertsPage() {
       <div className="stats" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', marginBottom: 16 }}>
         <div className="card stat"><div className="label">Abiertas</div><div className="value" style={{ color: open ? 'var(--danger)' : undefined }}>{open}</div></div>
         <div className="card stat"><div className="label">En revisión</div><div className="value">{review}</div></div>
+        <button type="button" className="card stat" onClick={() => setCritical(!critical)} aria-pressed={critical}
+          style={{ textAlign: 'left', cursor: 'pointer', font: 'inherit', color: 'inherit', outline: critical ? '2px solid var(--danger)' : undefined }}
+          title={critical ? 'Ver todas las alertas' : 'Ver solo las críticas'}>
+          <div className="label">Críticas sin cerrar</div>
+          <div className="value" style={{ color: criticalOpen ? 'var(--danger)' : undefined }}>{criticalOpen}</div>
+          <div className="hint">{critical ? 'Mostrando solo críticas' : 'Clic para filtrar'}</div>
+        </button>
         <div className="card stat"><div className="label">Mostradas</div><div className="value">{rows.length}</div></div>
       </div>
       <div className="split" style={{ gridTemplateColumns: 'minmax(300px, 420px) 1fr' }}>
@@ -90,12 +107,16 @@ export function AlertsPage() {
               <option value="">Todo origen</option>
               {(Object.keys(ORIGIN_LABELS) as Origin[]).map((o) => <option key={o} value={o}>{ORIGIN_LABELS[o]}</option>)}
             </select>
+            <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14, whiteSpace: 'nowrap' }}>
+              <input type="checkbox" checked={critical} onChange={(e) => setCritical(e.target.checked)} /> Solo críticas
+            </label>
           </div>
           <div className="list scroll-y" style={{ maxHeight: 'calc(100vh - 300px)' }}>
             {rows.map((r) => (
               <button key={r.id} className="list-item" aria-current={r.id === selected} onClick={() => setSelected(r.id)} style={{ alignItems: 'flex-start' }}>
                 <div className="grow">
                   <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    {r.isCritical && <span className="chip chip-off" style={{ fontWeight: 700 }}>Crítica</span>}
                     <strong>{INCIDENT_TYPE_LABELS[r.type]}</strong>
                     <span className={STATUS_CHIP[r.status]}>{statusLabel(r)}</span>
                     {originOf(r.launchedFrom) !== 'especialista' && <span className="chip">{ORIGIN_LABELS[originOf(r.launchedFrom)]}</span>}
@@ -104,13 +125,14 @@ export function AlertsPage() {
                   <small>{[r.stationCode, r.unitCode ?? r.methodCode, r.brigadeName].filter(Boolean).join(' · ') || 'Sin estación'}</small>
                   <small style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{r.description}</small>
                   <small>{r.reportedBy} · {when(r.occurredAt)}{r.files ? ` · ${r.files} evidencia${r.files > 1 ? 's' : ''}` : ''}</small>
+                  {r.followUpOwnerName && <small>Responsable: {r.followUpOwnerName}{r.followUpDueDate ? ` · para el ${fmtDate(r.followUpDueDate)}` : ''}</small>}
                 </div>
               </button>
             ))}
-            {list.isSuccess && !rows.length && <div className="empty">No hay alertas{status || type ? ' con estos filtros' : ''}.</div>}
+            {list.isSuccess && !rows.length && <div className="empty">No hay alertas{status || type || critical ? ' con estos filtros' : ''}.</div>}
           </div>
         </div>
-        {selected ? <AlertDetail id={selected} /> : <div className="card empty">Selecciona una alerta.</div>}
+        {selected ? <AlertDetail key={selected} id={selected} /> : <div className="card empty">Selecciona una alerta.</div>}
       </div>
     </>
   );
@@ -135,6 +157,7 @@ function AlertDetail({ id }: { id: string }) {
       <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <h2 style={{ flex: 1, margin: 0 }}>{INCIDENT_TYPE_LABELS[d.type]}</h2>
+          {d.isCritical && <span className="chip chip-off" style={{ fontWeight: 700 }}>Crítica</span>}
           <span className={STATUS_CHIP[d.status]}>{statusLabel(d)}</span>
         </div>
         <dl className="kv">
@@ -206,6 +229,20 @@ function AlertDetail({ id }: { id: string }) {
         )}
       </div>
 
+      {d.coordinations.length > 0 && (
+        <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div className="section-title" style={{ margin: 0 }}>Coordinaciones en campo ({d.coordinations.length})</div>
+          {d.coordinations.map((c) => (
+            <div key={c.id} style={{ borderLeft: '3px solid var(--primary)', paddingLeft: 10 }}>
+              <div className="hint" style={{ fontSize: 12 }}>{when(c.occurredAt)} · {COORDINATION_CHANNEL_LABELS[c.channel] ?? c.channel} · registró {c.authorName}</div>
+              <strong>Con {c.withWhom}</strong>
+              <div style={{ whiteSpace: 'pre-wrap' }}>{c.agreement}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <FollowUp detail={d} onDone={refresh} closed={closed} />
       <Thread detail={d} onSent={refresh} disabled={closed} />
       {admin && !closed && <DecisionForm detail={d} onDone={refresh} />}
       {admin && !closed && d.schedules.length > 0 && <RescheduleForm detail={d} onDone={refresh} />}
@@ -350,6 +387,105 @@ function CloseButton({ id, onDone }: { id: string; onDone: () => void }) {
   return (
     <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
       <button className="btn" onClick={() => confirm('¿Cerrar la alerta? Ya no se podrá responder.') && close.mutate()}>Cerrar alerta</button>
+    </div>
+  );
+}
+
+/** Jefe de proyecto / coordinación: alerta crítica, responsable del seguimiento y notas de avance hasta el cierre. */
+function FollowUp({ detail: d, onDone, closed }: { detail: Detail; onDone: () => void; closed: boolean }) {
+  const { can } = useAuth();
+  const marker = can(...CRITICAL_MARKER_ROLES);
+  const [reason, setReason] = useState('');
+  const [marking, setMarking] = useState(false);
+  const [ownerId, setOwnerId] = useState(d.followUpOwnerId ?? '');
+  const [dueDate, setDueDate] = useState(d.followUpDueDate ?? '');
+  const [note, setNote] = useState('');
+  const mark = useMutation({
+    mutationFn: (critical: boolean) => api(`/incidents/${d.id}/critical`, { method: 'POST', body: JSON.stringify({ critical, reason: critical ? reason : null }) }),
+    onSuccess: () => { setReason(''); setMarking(false); onDone(); },
+  });
+  const assign = useMutation({
+    mutationFn: () => api(`/incidents/${d.id}/follow-up`, { method: 'PUT', body: JSON.stringify({ ownerId: ownerId || null, dueDate: dueDate || null }) }),
+    onSuccess: onDone,
+  });
+  const addNote = useMutation({
+    mutationFn: () => api(`/incidents/${d.id}/follow-ups`, { method: 'POST', body: JSON.stringify({ body: note }) }),
+    onSuccess: () => { setNote(''); onDone(); },
+  });
+  const ownerChanged = ownerId !== (d.followUpOwnerId ?? '') || dueDate !== (d.followUpDueDate ?? '');
+  // Sin marca crítica ni seguimiento, solo quien puede marcar ve esta sección.
+  if (!marker && !d.isCritical && !d.followUpOwnerName && !d.followUps.length) return null;
+
+  return (
+    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10, borderLeft: d.isCritical ? '4px solid var(--danger)' : undefined }}>
+      <div className="section-title" style={{ margin: 0 }}>Seguimiento{d.isCritical ? ' de alerta crítica' : ''}</div>
+
+      {d.isCritical ? (
+        <div>
+          <strong style={{ color: 'var(--danger)' }}>Crítica</strong>
+          <span className="hint"> · marcó {d.criticalByName ?? '—'}{d.criticalAt ? `, ${when(d.criticalAt)}` : ''}</span>
+          {d.criticalReason && <p style={{ margin: '4px 0 0', whiteSpace: 'pre-wrap' }}>{d.criticalReason}</p>}
+          {marker && !closed && (
+            <button className="btn btn-sm" style={{ marginTop: 8 }} disabled={mark.isPending}
+              onClick={() => confirm('¿Quitar la marca de crítica? Queda registrado quién lo hizo.') && mark.mutate(false)}>Quitar marca crítica</button>
+          )}
+        </div>
+      ) : marker && !closed && (
+        marking ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="¿Por qué es crítica? (p. ej. “Riesgo de perder la campaña en la estación”)" autoFocus />
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="btn btn-sm" onClick={() => setMarking(false)}>Cancelar</button>
+              <button className="btn btn-primary btn-sm" disabled={reason.trim().length < 3 || mark.isPending} onClick={() => mark.mutate(true)}>Marcar como crítica</button>
+            </div>
+          </div>
+        ) : (
+          <div><button className="btn btn-sm" onClick={() => setMarking(true)}>Marcar como crítica</button></div>
+        )
+      )}
+      <ErrorBox error={mark.error} />
+
+      <div className="grid-2">
+        <label className="field">
+          <span className="label">Responsable del seguimiento</span>
+          {marker && !closed ? (
+            <select className="input" value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
+              <option value="">Sin asignar</option>
+              {d.assignees.map((u) => <option key={u.id} value={u.id}>{u.fullName}</option>)}
+            </select>
+          ) : <span>{d.followUpOwnerName ?? 'Sin asignar'}</span>}
+        </label>
+        <label className="field">
+          <span className="label">Fecha comprometida</span>
+          {marker && !closed ? (
+            <input className="input" type="date" value={dueDate} disabled={!ownerId} onChange={(e) => setDueDate(e.target.value)} />
+          ) : <span>{d.followUpDueDate ? fmtDate(d.followUpDueDate) : '—'}</span>}
+        </label>
+      </div>
+      {marker && !closed && ownerChanged && (
+        <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <button className="btn btn-primary btn-sm" disabled={assign.isPending} onClick={() => assign.mutate()}>Guardar responsable</button>
+        </div>
+      )}
+      <ErrorBox error={assign.error} />
+
+      <div className="section-title" style={{ margin: '4px 0 0' }}>Avances ({d.followUps.length})</div>
+      {d.followUps.map((f) => (
+        <div key={f.id} style={{ borderLeft: '3px solid var(--border)', paddingLeft: 10 }}>
+          <div className="hint" style={{ fontSize: 12 }}>{when(f.createdAt)} · {f.authorName}</div>
+          <div style={{ whiteSpace: 'pre-wrap' }}>{f.body}</div>
+        </div>
+      ))}
+      {!d.followUps.length && <span className="hint">Sin avances registrados. Son notas internas: no llegan al teléfono.</span>}
+      {!closed && (
+        <>
+          <textarea className="input" rows={2} value={note} onChange={(e) => setNote(e.target.value)} placeholder="Registra el avance (p. ej. “Se coordinó con logística el cambio de vehículo”)" />
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button className="btn btn-primary btn-sm" disabled={note.trim().length < 3 || addNote.isPending} onClick={() => addNote.mutate()}>Registrar avance</button>
+          </div>
+          <ErrorBox error={addNote.error} />
+        </>
+      )}
     </div>
   );
 }

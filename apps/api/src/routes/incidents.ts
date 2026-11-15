@@ -5,12 +5,14 @@ import { z } from 'zod';
 import {
   ADMIN_ROLES, INCIDENT_DECISION_LABELS, INCIDENT_STATUSES, INCIDENT_TYPES, WEB_ROLES, hasAnyRole,
   incidentDecisionSchema, incidentMessageSchema, incidentSyncSchema, rescheduleSchema,
-  RESCHEDULE_APPROVER_ROLES, type BrigadeIncidentDto, type IncidentMessageDto, type MyIncidentDto,
+  RESCHEDULE_APPROVER_ROLES, incidentCoordinationSchema, CRITICAL_MARKER_ROLES, incidentCriticalSchema, incidentFollowUpNoteSchema,
+  incidentFollowUpOwnerSchema, type IncidentFollowUpDto, type BrigadeIncidentDto, type IncidentCoordinationDto, type IncidentMessageDto, type MyIncidentDto,
 } from '@toce/shared';
 import { db } from '../db/index.js';
 import { audit } from '../lib/audit.js';
 import { HttpError, badRequest, conflict, idParam, notFound, projectParam } from '../lib/http.js';
 import { createReschedule } from '../lib/reschedules.js';
+import { iso } from './records.js';
 
 /** ¿Participa el usuario en la brigada (jefe, miembro, supervisor o logístico)? */
 async function inBrigade(userId: string, brigadeId: string) {
@@ -59,6 +61,32 @@ const reschedulesOf = async (incidentIds: string[]) => {
   }[];
 };
 
+const coordinationsOf = async (incidentIds: string[]) => {
+  if (!incidentIds.length) return [] as (IncidentCoordinationDto & { incidentId: string })[];
+  return (await db.execute(sql`
+    SELECT c.id, c.client_id AS "clientId", c.incident_id AS "incidentId", c.author_id AS "authorId", u.full_name AS "authorName",
+      c.with_whom AS "withWhom", c.channel, c.agreement, ${iso(sql`c.occurred_at`)} AS "occurredAt"
+    FROM incident_coordinations c JOIN users u ON u.id = c.author_id
+    WHERE c.incident_id IN (${sql.join(incidentIds.map((i) => sql`${i}`), sql`, `)})
+    ORDER BY c.occurred_at, c.created_at`)).rows as (IncidentCoordinationDto & { incidentId: string })[];
+};
+
+const followUpsOf = async (incidentId: string) =>
+  (await db.execute(sql`
+    SELECT f.id, f.author_id AS "authorId", u.full_name AS "authorName", f.body, ${iso(sql`f.created_at`)} AS "createdAt"
+    FROM incident_follow_ups f JOIN users u ON u.id = f.author_id
+    WHERE f.incident_id = ${incidentId} ORDER BY f.created_at`)).rows as IncidentFollowUpDto[];
+
+/** Quiénes pueden ser responsables del seguimiento: personal de la web y el equipo de las brigadas del proyecto. */
+const ASSIGNEES = (incidentId: string) => sql`
+  SELECT DISTINCT u.id, u.full_name AS "fullName" FROM users u
+  WHERE u.is_active AND u.deleted_at IS NULL AND (
+    u.roles && ARRAY['coordinador', 'jefe_proyecto', 'supervisor']::role[]
+    OR EXISTS (SELECT 1 FROM brigades b JOIN incidents i ON i.project_id = b.project_id AND i.id = ${incidentId}
+      WHERE u.id IN (b.leader_id, b.supervisor_id, b.logistician_id)))`;
+const assigneesOf = async (incidentId: string) =>
+  (await db.execute(sql`SELECT * FROM (${ASSIGNEES(incidentId)}) a ORDER BY "fullName"`)).rows as { id: string; fullName: string }[];
+
 /**
  * Alertas e incidencias.
  * Teléfono: POST /field/incidents, GET /field/incidents/mine, POST /field/incidents/:clientId/messages.
@@ -68,6 +96,7 @@ const incidentRoutes: FastifyPluginAsync = async (app) => {
   const r = app.withTypeProvider<ZodTypeProvider>();
   const read = app.requireRoles(...WEB_ROLES, 'jefe_proyecto');
   const write = app.requireRoles(...ADMIN_ROLES);
+  const marker = app.requireRoles(...CRITICAL_MARKER_ROLES);
 
   // ---------------------------------------------------------------- teléfono
 
@@ -152,13 +181,14 @@ const incidentRoutes: FastifyPluginAsync = async (app) => {
         i.resolved_at AS "resolvedAt", u.full_name AS "resolvedByName", i.updated_at AS "updatedAt"
       FROM incidents i LEFT JOIN users u ON u.id = i.resolved_by_id
       WHERE i.reported_by_id = ${req.user.sub} AND i.created_at > now() - interval '90 days'
-      ORDER BY i.occurred_at DESC`)).rows as Omit<MyIncidentDto, 'messages' | 'reschedules'>[];
+      ORDER BY i.occurred_at DESC`)).rows as Omit<MyIncidentDto, 'messages' | 'reschedules' | 'coordinations'>[];
     const ids = rows.map((x) => x.id);
-    const [msgs, rs] = await Promise.all([messagesOf(ids), reschedulesOf(ids)]);
+    const [msgs, rs, co] = await Promise.all([messagesOf(ids), reschedulesOf(ids), coordinationsOf(ids)]);
     return rows.map((x) => ({
       ...x,
       messages: msgs.filter((m) => m.incidentId === x.id).map(({ incidentId: _i, ...m }) => m),
       reschedules: rs.filter((m) => m.incidentId === x.id).map(({ incidentId: _i, ...m }) => m),
+      coordinations: co.filter((m) => m.incidentId === x.id).map(({ incidentId: _i, ...m }) => m),
     }));
   });
 
@@ -182,15 +212,42 @@ const incidentRoutes: FastifyPluginAsync = async (app) => {
       LEFT JOIN methods m ON m.id = i.method_id
       WHERE i.reported_by_id <> ${req.user.sub} AND i.created_at > now() - interval '30 days'
       ORDER BY i.occurred_at DESC
-      LIMIT 300`)).rows as Omit<BrigadeIncidentDto, 'messages' | 'reschedules'>[];
+      LIMIT 300`)).rows as Omit<BrigadeIncidentDto, 'messages' | 'reschedules' | 'coordinations'>[];
     const ids = rows.map((x) => x.id);
-    const [msgs, rs] = await Promise.all([messagesOf(ids), reschedulesOf(ids)]);
+    const [msgs, rs, co] = await Promise.all([messagesOf(ids), reschedulesOf(ids), coordinationsOf(ids)]);
     return rows.map((x) => ({
       ...x,
       messages: msgs.filter((m) => m.incidentId === x.id).map(({ incidentId: _i, ...m }) => m),
       reschedules: rs.filter((m) => m.incidentId === x.id).map(({ incidentId: _i, ...m }) => m),
+      coordinations: co.filter((m) => m.incidentId === x.id).map(({ incidentId: _i, ...m }) => m),
     }));
   });
+
+  /**
+   * Supervisor: coordinación con el equipo técnico al atender una incidencia (propia o de su brigada).
+   * Se registra en el teléfono sin conexión; el reenvío con el mismo clientId no duplica.
+   */
+  r.post(
+    '/field/incidents/:clientId/coordinations',
+    { onRequest: app.authenticate, schema: { params: z.object({ clientId: z.string().uuid() }), body: incidentCoordinationSchema } },
+    async (req, reply) => {
+      const inc = (await db.execute(sql`
+        SELECT id, reported_by_id AS "by", brigade_id AS "brigadeId", status FROM incidents WHERE client_id = ${req.params.clientId}`)).rows[0] as
+        | { id: string; by: string; brigadeId: string | null; status: string }
+        | undefined;
+      if (!inc) throw conflict('Primero se debe sincronizar la incidencia');
+      if (inc.by !== req.user.sub && !(await supervises(req.user.sub, inc.brigadeId))) {
+        throw new HttpError(403, 'Solo el supervisor de la brigada registra coordinaciones');
+      }
+      const c = req.body;
+      const row = (await db.execute(sql`
+        INSERT INTO incident_coordinations (client_id, incident_id, author_id, with_whom, channel, agreement, occurred_at)
+        VALUES (${c.clientId}, ${inc.id}, ${req.user.sub}, ${c.withWhom}, ${c.channel}, ${c.agreement}, ${c.occurredAt})
+        ON CONFLICT (client_id) DO NOTHING RETURNING id`)).rows[0] as { id: string } | undefined;
+      if (row) await db.execute(sql`UPDATE incidents SET updated_at = now() WHERE id = ${inc.id}`);
+      return reply.code(row ? 201 : 200).send({ ok: true, created: !!row });
+    },
+  );
 
   r.post(
     '/field/incidents/:clientId/messages',
@@ -226,6 +283,7 @@ const incidentRoutes: FastifyPluginAsync = async (app) => {
           type: z.enum(INCIDENT_TYPES).optional(),
           brigadeId: z.string().uuid().optional(),
           stationId: z.string().uuid().optional(),
+          critical: z.enum(['1', 'true']).optional(),
         }),
       },
     },
@@ -236,10 +294,12 @@ const incidentRoutes: FastifyPluginAsync = async (app) => {
       if (q.type) conds.push(sql`i.type = ${q.type}`);
       if (q.brigadeId) conds.push(sql`i.brigade_id = ${q.brigadeId}`);
       if (q.stationId) conds.push(sql`i.station_id = ${q.stationId}`);
+      if (q.critical) conds.push(sql`i.is_critical`);
       return (await db.execute(sql`
         SELECT i.id, i.type, i.moment, i.status, i.description, i.proposed_action AS "proposedAction", i.occurred_at AS "occurredAt",
           i.launched_from AS "launchedFrom", (i.resolution_notes IS NOT NULL AND i.coordination_decision IS NULL AND i.status = 'resuelta') AS "fieldResolved",
           i.coordination_decision AS "coordinationDecision", i.updated_at AS "updatedAt",
+          i.is_critical AS "isCritical", fo.full_name AS "followUpOwnerName", to_char(i.follow_up_due_date, 'YYYY-MM-DD') AS "followUpDueDate",
           ru.full_name AS "reportedBy", b.name AS "brigadeName", s.code AS "stationCode", m.code AS "methodCode", su.code AS "unitCode",
           (SELECT count(*)::int FROM attachments a WHERE a.owner_type = 'incident' AND a.owner_id = i.id) AS "files",
           (SELECT count(*)::int FROM incident_messages im WHERE im.incident_id = i.id) AS "messages",
@@ -250,8 +310,9 @@ const incidentRoutes: FastifyPluginAsync = async (app) => {
         LEFT JOIN stations s ON s.id = i.station_id
         LEFT JOIN methods m ON m.id = i.method_id
         LEFT JOIN sampling_units su ON su.id = i.sampling_unit_id
+        LEFT JOIN users fo ON fo.id = i.follow_up_owner_id
         WHERE ${sql.join(conds, sql` AND `)}
-        ORDER BY CASE i.status WHEN 'abierta' THEN 0 WHEN 'en_revision' THEN 1 ELSE 2 END, i.occurred_at DESC
+        ORDER BY (i.is_critical AND i.status <> 'cerrada') DESC, CASE i.status WHEN 'abierta' THEN 0 WHEN 'en_revision' THEN 1 ELSE 2 END, i.occurred_at DESC
         LIMIT 500`)).rows;
     },
   );
@@ -270,17 +331,23 @@ const incidentRoutes: FastifyPluginAsync = async (app) => {
         i.brigade_id AS "brigadeId", b.name AS "brigadeName", i.station_id AS "stationId", s.code AS "stationCode",
         s.influence_area AS "influenceArea", s.vegetation_unit AS "vegetationUnit",
         m.code AS "methodCode", m.name AS "methodName", su.code AS "unitCode", su.status AS "unitStatus",
-        i.schedule_id AS "scheduleId"
+        i.schedule_id AS "scheduleId",
+        i.is_critical AS "isCritical", i.critical_reason AS "criticalReason", ${iso(sql`i.critical_at`)} AS "criticalAt", cu.full_name AS "criticalByName",
+        i.follow_up_owner_id AS "followUpOwnerId", fo.full_name AS "followUpOwnerName", to_char(i.follow_up_due_date, 'YYYY-MM-DD') AS "followUpDueDate"
       FROM incidents i
       JOIN users ru ON ru.id = i.reported_by_id
       LEFT JOIN users rv ON rv.id = i.resolved_by_id
+      LEFT JOIN users cu ON cu.id = i.critical_by_id
+      LEFT JOIN users fo ON fo.id = i.follow_up_owner_id
       LEFT JOIN brigades b ON b.id = i.brigade_id
       LEFT JOIN stations s ON s.id = i.station_id
       LEFT JOIN methods m ON m.id = i.method_id
       LEFT JOIN sampling_units su ON su.id = i.sampling_unit_id
       WHERE i.id = ${req.params.id}`)).rows[0] as { id: string; stationId: string | null; brigadeId: string | null } | undefined;
     if (!inc) throw notFound('Alerta');
-    const [messages, reschedules] = await Promise.all([messagesOf([inc.id]), reschedulesOf([inc.id])]);
+    const [messages, reschedules, coordinations, followUps, assignees] = await Promise.all([
+      messagesOf([inc.id]), reschedulesOf([inc.id]), coordinationsOf([inc.id]), followUpsOf(inc.id), assigneesOf(inc.id),
+    ]);
     const files = (await db.execute(sql`
       SELECT id, kind, mime_type AS "mimeType", width, height, duration_sec AS "durationSec", taken_at AS "takenAt",
         upload_status AS "uploadStatus", original_upload_status AS "originalUploadStatus"
@@ -293,7 +360,10 @@ const incidentRoutes: FastifyPluginAsync = async (app) => {
           WHERE sc.station_id = ${inc.stationId} AND sc.status <> 'cancelada' ${inc.brigadeId ? sql`AND sc.brigade_id = ${inc.brigadeId}` : sql``}
           ORDER BY sc.planned_date`)).rows
       : [];
-    return { ...inc, messages: messages.map(({ incidentId: _i, ...m }) => m), reschedules: reschedules.map(({ incidentId: _i, ...m }) => m), files, schedules };
+    return {
+      ...inc, messages: messages.map(({ incidentId: _i, ...m }) => m), reschedules: reschedules.map(({ incidentId: _i, ...m }) => m),
+      coordinations: coordinations.map(({ incidentId: _i, ...m }) => m), files, schedules, followUps, assignees,
+    };
   });
 
   r.post(
@@ -340,6 +410,58 @@ const incidentRoutes: FastifyPluginAsync = async (app) => {
     if (!res.rows.length) throw conflict('Solo se cierran alertas resueltas o rechazadas');
     await audit(req, 'incident', req.params.id, 'close');
     return { ok: true };
+  });
+
+  /** Jefe de proyecto / coordinación: marca o desmarca una alerta como crítica (queda auditado). */
+  r.post('/incidents/:id/critical', { onRequest: marker, schema: { params: idParam, body: incidentCriticalSchema } }, async (req) => {
+    const { critical, reason } = req.body;
+    return db.transaction(async (tx) => {
+      const before = (await tx.execute(sql`
+        SELECT id, status, is_critical AS "isCritical", critical_reason AS "reason" FROM incidents WHERE id = ${req.params.id} FOR UPDATE`)).rows[0] as
+        | { id: string; status: string; isCritical: boolean; reason: string | null }
+        | undefined;
+      if (!before) throw notFound('Alerta');
+      if (before.status === 'cerrada') throw conflict('La alerta está cerrada');
+      await tx.execute(sql`
+        UPDATE incidents SET is_critical = ${critical}, critical_reason = ${critical ? reason ?? null : null},
+          critical_by_id = ${critical ? req.user.sub : null}, critical_at = ${critical ? sql`now()` : sql`NULL`}, updated_at = now()
+        WHERE id = ${before.id}`);
+      await audit(req, 'incident', before.id, critical ? 'mark_critical' : 'unmark_critical',
+        { before: { isCritical: before.isCritical, reason: before.reason }, after: { isCritical: critical, reason: critical ? reason : null } }, tx);
+      return { ok: true };
+    });
+  });
+
+  /** Responsable del seguimiento y fecha comprometida (auditado). */
+  r.put('/incidents/:id/follow-up', { onRequest: marker, schema: { params: idParam, body: incidentFollowUpOwnerSchema } }, async (req) => {
+    const { ownerId, dueDate } = req.body;
+    return db.transaction(async (tx) => {
+      const before = (await tx.execute(sql`
+        SELECT id, status, follow_up_owner_id AS "ownerId", to_char(follow_up_due_date, 'YYYY-MM-DD') AS "dueDate"
+        FROM incidents WHERE id = ${req.params.id} FOR UPDATE`)).rows[0] as { id: string; status: string; ownerId: string | null; dueDate: string | null } | undefined;
+      if (!before) throw notFound('Alerta');
+      if (before.status === 'cerrada') throw conflict('La alerta está cerrada');
+      if (ownerId) {
+        const ok = (await tx.execute(sql`SELECT 1 FROM (${ASSIGNEES(before.id)}) a WHERE a.id = ${ownerId}`)).rows.length > 0;
+        if (!ok) throw badRequest('El responsable debe ser del personal del proyecto');
+      }
+      await tx.execute(sql`
+        UPDATE incidents SET follow_up_owner_id = ${ownerId}, follow_up_due_date = ${ownerId ? dueDate ?? null : null}, updated_at = now()
+        WHERE id = ${before.id}`);
+      await audit(req, 'incident', before.id, 'follow_up_owner',
+        { before: { ownerId: before.ownerId, dueDate: before.dueDate }, after: { ownerId, dueDate: ownerId ? dueDate ?? null : null } }, tx);
+      return { ok: true };
+    });
+  });
+
+  /** Nota de avance del seguimiento (interna de la web). */
+  r.post('/incidents/:id/follow-ups', { onRequest: read, schema: { params: idParam, body: incidentFollowUpNoteSchema } }, async (req, reply) => {
+    const inc = (await db.execute(sql`SELECT id, status FROM incidents WHERE id = ${req.params.id}`)).rows[0] as { id: string; status: string } | undefined;
+    if (!inc) throw notFound('Alerta');
+    if (inc.status === 'cerrada') throw conflict('La alerta está cerrada');
+    await db.execute(sql`INSERT INTO incident_follow_ups (incident_id, author_id, body) VALUES (${inc.id}, ${req.user.sub}, ${req.body.body})`);
+    await db.execute(sql`UPDATE incidents SET updated_at = now() WHERE id = ${inc.id}`);
+    return reply.code(201).send({ ok: true });
   });
 
   r.post('/incidents/:id/reschedule', { onRequest: write, schema: { params: idParam, body: rescheduleSchema } }, async (req, reply) => {

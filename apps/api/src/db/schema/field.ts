@@ -1,5 +1,5 @@
 import {
-  pgTable, text, uuid, integer, timestamp, jsonb, index, uniqueIndex, pgEnum, boolean, bigint, doublePrecision,
+  pgTable, text, uuid, integer, timestamp, jsonb, index, uniqueIndex, pgEnum, boolean, bigint, doublePrecision, date,
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { id, createdAt, updatedAt, pointGeom } from './_common.js';
@@ -122,6 +122,7 @@ export const incidentTypeEnum = pgEnum('incident_type', [
   'desperfecto_mecanico',
   'hospedaje',
   'equipos',
+  'falta_materiales',
 ]);
 export const incidentMomentEnum = pgEnum('incident_moment', ['antes', 'durante', 'posterior']);
 export const incidentStatusEnum = pgEnum('incident_status', ['abierta', 'en_revision', 'resuelta', 'rechazada', 'cerrada']);
@@ -161,6 +162,13 @@ export const incidents = pgTable(
     resolvedAt: timestamp('resolved_at', { withTimezone: true }),
     coordinationResponse: text('coordination_response'),
     coordinationDecision: text('coordination_decision'), // aprobada | rechazada | info_adicional
+    /** Jefe de proyecto / coordinación: alerta crítica (quién y por qué) y responsable del seguimiento hasta el cierre. */
+    isCritical: boolean('is_critical').notNull().default(false),
+    criticalReason: text('critical_reason'),
+    criticalById: uuid('critical_by_id').references(() => users.id),
+    criticalAt: timestamp('critical_at', { withTimezone: true }),
+    followUpOwnerId: uuid('follow_up_owner_id').references(() => users.id),
+    followUpDueDate: date('follow_up_due_date', { mode: 'string' }),
     clientUpdatedAt: timestamp('client_updated_at', { withTimezone: true }).notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
@@ -225,6 +233,44 @@ export const reschedules = pgTable(
     // Una sola propuesta pendiente por visita.
     uniqueIndex('reschedules_one_pending_idx').on(t.scheduleId).where(sql`status = 'propuesta'`),
   ],
+);
+
+/** Coordinaciones del supervisor con el equipo técnico al atender una incidencia (se registran en el teléfono, sin conexión). */
+export const incidentCoordinations = pgTable(
+  'incident_coordinations',
+  {
+    id: id(),
+    clientId: uuid('client_id').notNull(),
+    incidentId: uuid('incident_id')
+      .notNull()
+      .references(() => incidents.id, { onDelete: 'cascade' }),
+    authorId: uuid('author_id')
+      .notNull()
+      .references(() => users.id),
+    withWhom: text('with_whom').notNull(),
+    channel: text('channel').notNull().default('presencial'),
+    agreement: text('agreement').notNull(),
+    occurredAt: timestamp('occurred_at', { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex('incident_coordinations_client_idx').on(t.clientId), index('incident_coordinations_incident_idx').on(t.incidentId)],
+);
+
+/** Notas de avance del seguimiento de una alerta (web; internas, no llegan al teléfono). */
+export const incidentFollowUps = pgTable(
+  'incident_follow_ups',
+  {
+    id: id(),
+    incidentId: uuid('incident_id')
+      .notNull()
+      .references(() => incidents.id, { onDelete: 'cascade' }),
+    authorId: uuid('author_id')
+      .notNull()
+      .references(() => users.id),
+    body: text('body').notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('incident_follow_ups_incident_idx').on(t.incidentId, t.createdAt)],
 );
 
 export const inquiryStatusEnum = pgEnum('inquiry_status', ['abierta', 'respondida', 'cerrada']);

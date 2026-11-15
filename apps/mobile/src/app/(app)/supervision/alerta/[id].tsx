@@ -8,6 +8,7 @@ import { useAuth } from '../../../../lib/auth';
 import { useField } from '../../../../lib/field';
 import { usePackageIndex } from '../../../../lib/workPackage';
 import { shortDateTime } from '../../../../components/alerts';
+import { Coordinations } from '../../../../components/coordinations';
 import { colors, radius } from '../../../../theme';
 
 /**
@@ -86,6 +87,8 @@ export default function BrigadeAlertScreen() {
             {!!i.correctiveAction && <Text style={s.body}><Text style={s.bold}>Acción correctiva: </Text>{i.correctiveAction}</Text>}
           </View>
         )}
+
+        <Coordinations incidentClientId={i.clientId} sent={i.coordinations} pending={i.coordOutbox} canAdd={i.status !== 'cerrada'} />
 
         <View style={s.card}>
           <Text style={s.h3}>Conversación y notas de supervisión</Text>

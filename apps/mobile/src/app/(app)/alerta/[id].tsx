@@ -7,6 +7,8 @@ import { useAuth } from '../../../lib/auth';
 import { useAttachments, useField } from '../../../lib/field';
 import { usePackageIndex } from '../../../lib/workPackage';
 import { incidentState, shortDateTime } from '../../../components/alerts';
+import { Coordinations } from '../../../components/coordinations';
+import { useRoleView } from '../../../lib/roles';
 import { Pill } from '../../../components/field';
 import { colors, radius } from '../../../theme';
 
@@ -20,6 +22,7 @@ export default function AlertDetailScreen() {
   const index = usePackageIndex();
   const [reply, setReply] = useState('');
   const incident = field.incidents.find((i) => i.clientId === id);
+  const roleView = useRoleView();
 
   const [photos] = useAttachments(id);
   // Al abrirla se marcan como vistas las novedades de coordinación.
@@ -127,6 +130,11 @@ export default function AlertDetailScreen() {
             ))}
             <Text style={s.small}>Tu paquete de trabajo ya trae la nueva fecha.</Text>
           </View>
+        )}
+
+        {/* Supervisor: coordinaciones con el equipo técnico en sus propias incidencias. */}
+        {roleView.supervises && (
+          <Coordinations incidentClientId={incident.clientId} sent={r?.coordinations} pending={incident.coordOutbox} canAdd={r?.status !== 'cerrada'} />
         )}
 
         <View style={s.card}>

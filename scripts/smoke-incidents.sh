@@ -8,10 +8,11 @@ check() { [ "$2" = "$3" ] && echo "  OK   $1" || { echo "  FAIL $1: esperado [$3
 token() { curl -s -X POST $B/auth/login -H 'content-type: application/json' -d "{\"dni\":\"$1\",\"password\":\"Toce2026\"}" | js 'p.accessToken'; }
 js() { node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const p=JSON.parse(s);console.log(eval(process.argv[1]))})' "$1"; }
 uuid() { node -e 'console.log(crypto.randomUUID())'; }
-psql() { docker exec toce-postgres psql -U toce -d toce -tAc "$1"; }
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+psql() { if [ -n "${USE_DOCKER:-}" ]; then docker exec toce-postgres psql -U toce -d toce -tAc "$1"; else node "$ROOT/scripts/lib/sql.cjs" "$1"; fi; }
 NOW=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
 
-ANA=$(token 20000001); COO=$(token 10000001); JP=$(token 10000002); FLO=$(token 20000006)
+ANA=$(token 20000001); COO=$(token 10000001); JP=$(token 10000002); FLO=$(token 20000006); SUP=$(token 10000003)
 PKG=$(curl -s "$B/work-package" -H "authorization: Bearer $ANA")
 UNIT=$(echo "$PKG" | js 'JSON.stringify(p.units.find(u=>u.status==="pendiente"))')
 UNIT_ID=$(echo "$UNIT" | js 'p.id'); STATION=$(echo "$UNIT" | js 'p.stationId'); METHOD=$(echo "$UNIT" | js 'p.methodId')
@@ -66,7 +67,38 @@ check "historial conserva fecha original" "$(psql "select to_char(from_date at t
 MINE=$(curl -s "$B/field/incidents/mine" -H "authorization: Bearer $ANA")
 check "el teléfono recibe respuesta y conversación" "$(echo "$MINE" | js "const i=p.find(x=>x.clientId==='$INC');i.status+':'+i.coordinationDecision+':'+i.messages.length+':'+i.reschedules.length")" "resuelta:aprobada:4:1"
 check "el paquete trae la nueva fecha" "$(curl -s "$B/work-package" -H "authorization: Bearer $ANA" | js "p.schedules.find(s=>s.id==='$SCHED').plannedDate")" "$NEW"
+echo "Alertas críticas y seguimiento (jefe de proyecto)"
+code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+crit() { curl -s "$B/projects/$PROJ/tracking" -H "authorization: Bearer $JP" | js 'p.metrics.criticalAlerts'; }
+CRIT0=$(crit)
+J='content-type: application/json'
+check "especialista no marca crítica: 403" "$(code -X POST "$B/incidents/$INC_ID/critical" -H "authorization: Bearer $ANA" -H "$J" -d '{"critical":true,"reason":"Urgente"}')" 403
+check "supervisor no marca crítica: 403" "$(code -X POST "$B/incidents/$INC_ID/critical" -H "authorization: Bearer $SUP" -H "$J" -d '{"critical":true,"reason":"Urgente"}')" 403
+check "marcar sin motivo: 400" "$(code -X POST "$B/incidents/$INC_ID/critical" -H "authorization: Bearer $JP" -H "$J" -d '{"critical":true}')" 400
+check "jefe de proyecto marca crítica" "$(post "/incidents/$INC_ID/critical" "$JP" '{"critical":true,"reason":"Riesgo de perder la estación"}' | js 'p.ok')" true
+D=$(curl -s "$B/incidents/$INC_ID" -H "authorization: Bearer $COO")
+check "detalle: crítica, quién y por qué" "$(echo "$D" | js 'p.isCritical+":"+p.criticalByName+":"+p.criticalReason')" "true:Jorge Jefe de Proyecto:Riesgo de perder la estación"
+check "queda auditado" "$(psql "select count(*) from audit_logs where entity_id='$INC_ID' and action='mark_critical'")" 1
+check "filtro de críticas" "$(curl -s "$B/projects/$PROJ/incidents?critical=1" -H "authorization: Bearer $JP" | js "p.length>0 && p.every(x=>x.isCritical) && p.some(x=>x.id==='$INC_ID')")" true
+check "contador en Avance sube" "$(crit)" "$((CRIT0 + 1))"
+BODY=$(printf '{"ownerId":"%s"}' "$(uuid)")
+check "responsable ajeno al proyecto: 400" "$(code -X PUT "$B/incidents/$INC_ID/follow-up" -H "authorization: Bearer $JP" -H "$J" -d "$BODY")" 400
+SUP_ID=$(psql "select id from users where dni='10000003'")
+DUE=$(date -v+2d +%Y-%m-%d)
+BODY=$(printf '{"ownerId":"%s","dueDate":"%s"}' "$SUP_ID" "$DUE")
+check "asigna responsable y fecha" "$(code -X PUT "$B/incidents/$INC_ID/follow-up" -H "authorization: Bearer $JP" -H "$J" -d "$BODY")" 200
+check "supervisor no reasigna: 403" "$(code -X PUT "$B/incidents/$INC_ID/follow-up" -H "authorization: Bearer $SUP" -H "$J" -d '{"ownerId":null}')" 403
+check "nota de avance muy corta: 400" "$(code -X POST "$B/incidents/$INC_ID/follow-ups" -H "authorization: Bearer $SUP" -H "$J" -d '{"body":"ok"}')" 400
+check "el responsable registra avance" "$(code -X POST "$B/incidents/$INC_ID/follow-ups" -H "authorization: Bearer $SUP" -H "$J" -d '{"body":"Se coordinó el cambio de fecha con la brigada"}')" 201
+check "especialista no registra avances: 403" "$(code -X POST "$B/incidents/$INC_ID/follow-ups" -H "authorization: Bearer $ANA" -H "$J" -d '{"body":"Avance del campo"}')" 403
+D=$(curl -s "$B/incidents/$INC_ID" -H "authorization: Bearer $JP")
+check "detalle: responsable, fecha y avances" "$(echo "$D" | js 'p.followUpOwnerName+":"+p.followUpDueDate+":"+p.followUps.length+":"+p.followUps[0].authorName')" "Sofía Supervisora:$DUE:1:Sofía Supervisora"
+check "los avances no llegan al teléfono" "$(curl -s "$B/field/incidents/mine" -H "authorization: Bearer $ANA" | js "p.find(x=>x.clientId==='$INC').messages.some(m=>m.body.includes('cambio de fecha'))")" false
+
 check "cierre" "$(post "/incidents/$INC_ID/close" "$COO" '{}' | js 'p.ok')" true
+check "cerrada: ya no cuenta como crítica" "$(crit)" "$CRIT0"
+check "cerrada: no admite avances (409)" "$(code -X POST "$B/incidents/$INC_ID/follow-ups" -H "authorization: Bearer $JP" -H "$J" -d '{"body":"Otro avance"}')" 409
+check "cerrada: no se desmarca (409)" "$(code -X POST "$B/incidents/$INC_ID/critical" -H "authorization: Bearer $JP" -H "$J" -d '{"critical":false}')" 409
 
 # Limpieza: devuelve la programación, borra alertas, archivos y auditoría de prueba.
 psql "

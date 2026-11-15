@@ -13,7 +13,7 @@ export const LOGISTICS_ENTITY_LABELS: Record<LogisticsEntity, { one: string; man
   support: { one: 'Apoyo local', many: 'Apoyos locales' },
   expense: { one: 'Gasto', many: 'Viáticos y comprobantes' },
   sample: { one: 'Muestra', many: 'Muestras y envíos' },
-  equipment: { one: 'Equipo', many: 'Equipos' },
+  equipment: { one: 'Equipo o material', many: 'Equipos y materiales' },
 };
 
 export const VEHICLE_STATUSES = ['programada', 'en_ruta', 'llegada', 'averiada', 'accidente', 'finalizada'] as const;
@@ -27,13 +27,14 @@ export const VEHICLE_STATUS_LABELS: Record<VehicleStatus, string> = {
   finalizada: 'Finalizada',
 };
 
-export const EXPENSE_CATEGORIES = ['alimentacion', 'hospedaje', 'transporte', 'combustible', 'materiales', 'apoyo_local', 'otro'] as const;
+export const EXPENSE_CATEGORIES = ['alimentacion', 'hospedaje', 'transporte', 'combustible', 'peajes', 'materiales', 'apoyo_local', 'otro'] as const;
 export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
 export const EXPENSE_CATEGORY_LABELS: Record<ExpenseCategory, string> = {
   alimentacion: 'Alimentación',
   hospedaje: 'Hospedaje',
   transporte: 'Transporte',
   combustible: 'Combustible',
+  peajes: 'Peajes',
   materiales: 'Materiales',
   apoyo_local: 'Pago a apoyo local',
   otro: 'Otro',
@@ -59,6 +60,15 @@ export const EQUIPMENT_STATUS_LABELS: Record<EquipmentStatus, string> = {
   defectuoso: 'Defectuoso',
   en_reparacion: 'En reparación',
   perdido: 'Perdido',
+};
+
+/** Recepción en campo de equipos y materiales enviados a la brigada. */
+export const RECEPTION_STATUSES = ['por_recibir', 'recibido', 'incompleto'] as const;
+export type ReceptionStatus = (typeof RECEPTION_STATUSES)[number];
+export const RECEPTION_STATUS_LABELS: Record<ReceptionStatus, string> = {
+  por_recibir: 'Por recibir',
+  recibido: 'Recibido completo',
+  incompleto: 'Recibido incompleto',
 };
 
 /** Sugerencias para marcar con un toque (también se puede escribir otro). */
@@ -138,6 +148,11 @@ export const equipmentSchema = z.object({
   quantity: z.number().int().min(1).max(100000).default(1),
   status: z.enum(EQUIPMENT_STATUSES),
   notes: text(2000),
+  /** Recepción (null = no se registró): estado, cuándo, quién recibió y cuánto llegó si vino incompleto. */
+  receptionStatus: z.enum(RECEPTION_STATUSES).nullish(),
+  receivedAt: isoDateTime.nullish(),
+  receivedBy: text(160),
+  receivedQuantity: z.number().int().min(0).max(100000).nullish(),
 });
 
 export const LOGISTICS_SCHEMAS = {

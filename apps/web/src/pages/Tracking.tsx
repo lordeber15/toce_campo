@@ -41,6 +41,7 @@ export function MetricTiles({ m, brigades, links = true }: { m: TrackingMetrics;
       />
       <Tile label="Estaciones atrasadas" value={`${m.stationsLate}`} warn={m.stationsLate > 0} hint="fecha vencida sin cerrar" />
       <Tile label="Alertas activas" value={`${m.activeAlerts}`} warn={m.activeAlerts > 0} link={links ? '/alertas' : undefined} />
+      <Tile label="Alertas críticas" value={`${m.criticalAlerts}`} warn={m.criticalAlerts > 0} hint="marcadas, sin cerrar" link={links ? '/alertas?critica=1' : undefined} />
       <Tile label="Reprogramaciones pendientes" value={`${m.pendingReschedules}`} warn={m.pendingReschedules > 0} hint="por aprobar o sin nueva fecha" link={links ? '/reprogramaciones' : undefined} />
     </div>
   );
@@ -128,7 +129,10 @@ function BrigadeRow({ b, onOpen }: { b: BrigadeTracking; onOpen: () => void }) {
       <td>{m.stationsExecuted}/{m.stationsPlanned}{m.stationsInProgress ? <small className="hint"> · {m.stationsInProgress} en curso</small> : null}</td>
       <td style={{ color: m.stationsLate ? 'var(--danger)' : undefined, fontWeight: m.stationsLate ? 600 : undefined }}>{m.stationsLate}</td>
       <td>{pctText(m.deviationPct)}</td>
-      <td>{m.activeAlerts ? <span className="chip chip-off">{m.activeAlerts}</span> : '0'}</td>
+      <td>
+        {m.activeAlerts ? <span className="chip chip-off">{m.activeAlerts}</span> : '0'}
+        {m.criticalAlerts > 0 && <span className="chip chip-off" style={{ marginLeft: 4 }} title="Alertas críticas sin cerrar">{m.criticalAlerts} crítica{m.criticalAlerts > 1 ? 's' : ''}</span>}
+      </td>
       <td style={{ color: sync.stale ? 'var(--warn)' : undefined }}>{sync.text}</td>
     </tr>
   );

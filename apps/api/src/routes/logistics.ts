@@ -50,6 +50,8 @@ export const LOGISTICS_TABLES: Record<LogisticsEntity, { table: string; folder: 
     table: 'logistics_equipment', folder: 'equipos',
     cols: [
       ['name', 'name', 'text'], ['serial', 'serial', 'text'], ['quantity', 'quantity', 'int'], ['status', 'status', 'text'], ['notes', 'notes', 'text'],
+      ['receptionStatus', 'reception_status', 'text'], ['receivedAt', 'received_at', 'ts'], ['receivedBy', 'received_by', 'text'],
+      ['receivedQuantity', 'received_quantity', 'int'],
     ],
   },
 };

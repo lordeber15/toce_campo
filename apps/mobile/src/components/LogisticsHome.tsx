@@ -44,7 +44,10 @@ export function summarize(entity: LogisticsEntity, list: LocalLogistics[]): { va
     case 'equipment': {
       const v = data as EquipmentData[];
       const bad = v.filter((x) => x.status !== 'operativo').length;
-      return { value: `${v.length}`, detail: bad ? `${bad} con problemas` : 'todos operativos', warn: bad > 0 };
+      const toReceive = v.filter((x) => x.receptionStatus === 'por_recibir').length;
+      const incomplete = v.filter((x) => x.receptionStatus === 'incompleto').length;
+      const parts = [bad ? `${bad} con problemas` : 'todos operativos', toReceive && `${toReceive} por recibir`, incomplete && `${incomplete} incompletos`].filter(Boolean);
+      return { value: `${v.length}`, detail: parts.join(' · '), warn: bad + incomplete > 0 };
     }
   }
 }

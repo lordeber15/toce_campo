@@ -3,7 +3,7 @@ import { AppState } from 'react-native';
 import * as Crypto from 'expo-crypto';
 import { File, UploadType } from 'expo-file-system';
 import type {
-  AttachmentMetaResult, BrigadeIncidentDto, ExecutionFormData, ExecutionStatus, ExecutionSync, ExecutionSyncResult, IncidentMoment,
+  AttachmentMetaResult, BrigadeIncidentDto, CoordinationChannel, ExecutionFormData, ExecutionStatus, ExecutionSync, ExecutionSyncResult, IncidentMoment,
   IncidentOrigin, IncidentSync, IncidentType, LogisticsData, LogisticsEntity, LogisticsRecordDto, MyIncidentDto, MyInquiryDto, WpUnit,
 } from '@toce/shared';
 import { ApiError, OfflineError, api, getAccessToken, hasAccessToken, refreshAccessToken } from './api';
@@ -108,16 +108,21 @@ export type LocalIncident = {
   seenAt: string | null;
   /** Mensajes escritos en el teléfono que aún no se envían. */
   outbox: { clientId: string; body: string; sentAt: string }[];
+  /** Coordinaciones con el equipo técnico aún por enviar. */
+  coordOutbox: PendingCoordination[];
   /** Hay novedades de coordinación que el usuario no ha visto. */
   unread: boolean;
 };
 
-export type IncidentDraft = Omit<LocalIncident, 'updatedAt' | 'syncedAt' | 'syncError' | 'remote' | 'seenAt' | 'outbox' | 'unread' | 'methodologicalDeviation' | 'correctiveAction' | 'resolutionNotes'>
+export type PendingCoordination = { clientId: string; withWhom: string; channel: CoordinationChannel; agreement: string; occurredAt: string; error: string | null };
+
+export type IncidentDraft = Omit<LocalIncident, 'updatedAt' | 'syncedAt' | 'syncError' | 'remote' | 'seenAt' | 'outbox' | 'coordOutbox' | 'unread' | 'methodologicalDeviation' | 'correctiveAction' | 'resolutionNotes'>
   & Partial<Pick<LocalIncident, 'methodologicalDeviation' | 'correctiveAction' | 'resolutionNotes'>>;
 
 /** Alerta de otra persona en una brigada que supervisa el usuario (descargada del servidor). */
 export type BrigadeIncident = BrigadeIncidentDto & {
   outbox: { clientId: string; body: string; sentAt: string }[];
+  coordOutbox: PendingCoordination[];
   unread: boolean;
 };
 
@@ -188,6 +193,8 @@ type Ctx = {
   removeAttachment: (clientId: string) => Promise<boolean>;
   saveIncident: (draft: IncidentDraft) => Promise<void>;
   sendIncidentMessage: (incidentClientId: string, body: string) => Promise<void>;
+  /** Supervisor: anota una coordinación con el equipo técnico (se envía sola, también sin conexión). */
+  addCoordination: (incidentClientId: string, c: { withWhom: string; channel: CoordinationChannel; agreement: string }) => Promise<void>;
   markIncidentSeen: (incidentClientId: string) => Promise<void>;
   markBrigadeIncidentSeen: (incidentClientId: string) => Promise<void>;
   /** Guarda la respuesta para enviarla (también sin conexión). Devuelve su id local. */
@@ -325,6 +332,14 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
     const inc = await db.getAllAsync<IncRow>('SELECT * FROM incidents WHERE user_id = ? ORDER BY occurred_at DESC', userId);
     const out = await db.getAllAsync<{ client_id: string; incident_client_id: string; body: string; sent_at: string }>(
       'SELECT client_id, incident_client_id, body, sent_at FROM incident_messages_out WHERE synced = 0 ORDER BY sent_at');
+    const co = await db.getAllAsync<{ client_id: string; incident_client_id: string; with_whom: string; channel: CoordinationChannel; agreement: string; occurred_at: string; sync_error: string | null }>(
+      'SELECT * FROM incident_coordinations_out WHERE user_id = ? AND synced <> 1 ORDER BY occurred_at', userId);
+    const coordsOf = (incidentClientId: string, remote: { coordinations?: { clientId: string }[] } | null): PendingCoordination[] => {
+      const sent = new Set((remote?.coordinations ?? []).map((c) => c.clientId));
+      return co.filter((c) => c.incident_client_id === incidentClientId && !sent.has(c.client_id)).map((c) => ({
+        clientId: c.client_id, withWhom: c.with_whom, channel: c.channel, agreement: c.agreement, occurredAt: c.occurred_at, error: c.sync_error,
+      }));
+    };
     setIncidents(inc.map((r) => {
       const remote = r.remote ? (JSON.parse(r.remote) as MyIncidentDto) : null;
       return {
@@ -334,6 +349,7 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
         methodologicalDeviation: r.methodological_deviation, correctiveAction: r.corrective_action, resolutionNotes: r.resolution_notes,
         lat: r.lat, lng: r.lng, updatedAt: r.updated_at, syncedAt: r.synced_at, syncError: r.sync_error, remote, seenAt: r.seen_at,
         outbox: out.filter((m) => m.incident_client_id === r.client_id).map((m) => ({ clientId: m.client_id, body: m.body, sentAt: m.sent_at })),
+        coordOutbox: coordsOf(r.client_id, remote),
         unread: hasNews(remote, r.seen_at, userId),
       };
     }));
@@ -345,6 +361,7 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
       return {
         ...d,
         outbox: out.filter((m) => m.incident_client_id === r.client_id).map((m) => ({ clientId: m.client_id, body: m.body, sentAt: m.sent_at })),
+        coordOutbox: coordsOf(r.client_id, d),
         // Nueva para el supervisor si nunca la abrió o si hay mensajes de otros desde entonces.
         unread: !r.seen_at || hasNews(d, r.seen_at, userId),
       };
@@ -385,13 +402,14 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
          + (SELECT COUNT(*) FROM incidents WHERE user_id = ? AND (synced_at IS NULL OR synced_at <> updated_at))
          + (SELECT COUNT(*) FROM logistics WHERE user_id = ? AND (synced_at IS NULL OR synced_at <> updated_at))
          + (SELECT COUNT(*) FROM incident_messages_out WHERE synced = 0)
+         + (SELECT COUNT(*) FROM incident_coordinations_out WHERE user_id = ? AND synced = 0)
          + (SELECT COUNT(*) FROM inquiry_replies_out WHERE user_id = ? AND synced = 0) AS ex,
          (SELECT COUNT(*) FROM attachments a WHERE ${files}
             AND (a.meta_synced = 0 OR a.uploaded = 0 OR (a.original_path IS NOT NULL AND a.original_uploaded = 0))) AS files,
          (SELECT SUM(CASE WHEN a.uploaded = 0 THEN COALESCE(a.size_bytes, 0) ELSE 0 END
                    + CASE WHEN a.original_path IS NOT NULL AND a.original_uploaded = 0 THEN COALESCE(a.original_size_bytes, 0) ELSE 0 END)
             FROM attachments a WHERE ${files}) AS bytes`,
-      userId, userId, userId, userId, userId, userId, userId, userId, userId, userId, userId, userId);
+      userId, userId, userId, userId, userId, userId, userId, userId, userId, userId, userId, userId, userId);
     setPending({ executions: p?.ex ?? 0, files: p?.files ?? 0, bytes: p?.bytes ?? 0 });
     setRev((v) => v + 1);
   }, [userId]);
@@ -548,6 +566,17 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
     scheduleSync();
   }, [reload, scheduleSync]);
 
+  const addCoordination = useCallback<Ctx['addCoordination']>(async (incidentClientId, c) => {
+    if (!userId) throw new Error('Sin sesión');
+    const db = await getDb();
+    await db.runAsync(
+      `INSERT INTO incident_coordinations_out (client_id, user_id, incident_client_id, with_whom, channel, agreement, occurred_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      Crypto.randomUUID(), userId, incidentClientId, c.withWhom.trim(), c.channel, c.agreement.trim(), new Date().toISOString());
+    await reload();
+    scheduleSync();
+  }, [userId, reload, scheduleSync]);
+
   const markIncidentSeen = useCallback(async (incidentClientId: string) => {
     const db = await getDb();
     await db.runAsync('UPDATE incidents SET seen_at = ? WHERE client_id = ?', new Date().toISOString(), incidentClientId);
@@ -636,7 +665,7 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
         byUnit, executions, incidents, unreadIncidents, brigadeIncidents, unreadBrigadeIncidents, logistics, inquiries, unreadInquiries,
         rev, pending, syncing, sendInquiryReply, markInquirySeen,
         lastSyncAt, lastSyncError, lastReport, start, update, attachmentsOf, addAttachment, removeAttachment, saveIncident,
-        sendIncidentMessage, markIncidentSeen, markBrigadeIncidentSeen, saveLogistics, retentionCandidates, freeUploadedFiles, syncNow,
+        sendIncidentMessage, addCoordination, markIncidentSeen, markBrigadeIncidentSeen, saveLogistics, retentionCandidates, freeUploadedFiles, syncNow,
       }}
     >
       {children}
@@ -792,6 +821,27 @@ async function pushAll(
       report.records++;
     } catch (err) {
       if (!(err instanceof ApiError)) throw err;
+    }
+  }
+
+  // 3a) Coordinaciones del supervisor (la incidencia propia ya debe estar en el servidor; las de la brigada ya lo están).
+  const coords = await db.getAllAsync<{ client_id: string; incident_client_id: string; with_whom: string; channel: string; agreement: string; occurred_at: string }>(
+    `SELECT c.client_id, c.incident_client_id, c.with_whom, c.channel, c.agreement, c.occurred_at FROM incident_coordinations_out c
+     LEFT JOIN incidents i ON i.client_id = c.incident_client_id
+     WHERE c.user_id = ? AND c.synced = 0 AND (i.client_id IS NULL OR i.synced_at IS NOT NULL) ORDER BY c.occurred_at`, userId);
+  for (const c of coords) {
+    try {
+      await api(`/field/incidents/${c.incident_client_id}/coordinations`, {
+        method: 'POST',
+        body: JSON.stringify({ clientId: c.client_id, withWhom: c.with_whom, channel: c.channel, agreement: c.agreement, occurredAt: c.occurred_at }),
+      }, 15000);
+      await db.runAsync('UPDATE incident_coordinations_out SET synced = 1, sync_error = NULL WHERE client_id = ?', c.client_id);
+      report.records++;
+    } catch (err) {
+      if (!(err instanceof ApiError)) throw err;
+      // 409: la incidencia aún no llega al servidor (se reintenta); otros 4xx no se aceptarán nunca; 5xx se reintenta.
+      const final = err.status >= 400 && err.status < 500 && err.status !== 409;
+      await db.runAsync('UPDATE incident_coordinations_out SET sync_error = ?, synced = ? WHERE client_id = ?', err.message, final ? 2 : 0, c.client_id);
     }
   }
 

@@ -57,7 +57,7 @@ export const logisticsSupportStaff = pgTable(
   (t) => [uniqueIndex('logistics_support_client_idx').on(t.clientId), index('logistics_support_brigade_idx').on(t.brigadeId)],
 );
 
-export const expenseCategoryEnum = pgEnum('expense_category', ['alimentacion', 'hospedaje', 'transporte', 'combustible', 'materiales', 'apoyo_local', 'otro']);
+export const expenseCategoryEnum = pgEnum('expense_category', ['alimentacion', 'hospedaje', 'transporte', 'combustible', 'peajes', 'materiales', 'apoyo_local', 'otro']);
 
 /** Viáticos y comprobantes. */
 export const logisticsExpenses = pgTable(
@@ -124,6 +124,11 @@ export const logisticsEquipment = pgTable(
     quantity: integer('quantity').notNull().default(1),
     status: text('status').notNull().default('operativo'), // operativo | defectuoso | perdido | en_reparacion
     notes: text('notes'),
+    /** Recepción en campo: por_recibir | recibido | incompleto (null = no registrada). */
+    receptionStatus: text('reception_status'),
+    receivedAt: timestamp('received_at', { withTimezone: true }),
+    receivedBy: text('received_by'),
+    receivedQuantity: integer('received_quantity'),
     extra: jsonb('extra').$type<Record<string, unknown>>(),
     registeredById: uuid('registered_by_id').notNull().references(() => users.id),
     clientUpdatedAt: timestamp('client_updated_at', { withTimezone: true }).notNull(),

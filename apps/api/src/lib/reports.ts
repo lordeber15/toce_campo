@@ -128,6 +128,7 @@ function metricPairs(m: TrackingMetrics & { brigades?: number }): [string, unkno
     ['Desviación del cronograma', m.deviationPct == null ? null : `${m.deviationPct} %`],
     ['Unidades ejecutadas en fecha reprogramada', m.rescheduledUnits],
     ['Alertas activas', m.activeAlerts],
+    ['Alertas críticas sin cerrar', m.criticalAlerts],
     ['Reprogramaciones pendientes', m.pendingReschedules],
   ];
 }
@@ -301,19 +302,27 @@ export async function consolidatedWorkbook(projectId: string, date: string) {
     SELECT ${ISO(sql`i.occurred_at`)} AS "occurredAt", i.type, i.status, i.launched_from AS origin, b.name AS "brigadeName", s.code AS "stationCode",
       su.code AS "unitCode", u.full_name AS "reportedBy", i.description, i.proposed_action AS "proposedAction",
       i.coordination_decision AS decision, i.coordination_response AS response, ru.full_name AS "resolvedBy", ${ISO(sql`i.resolved_at`)} AS "resolvedAt",
-      (SELECT count(*) FROM incident_messages im WHERE im.incident_id = i.id)::int AS messages
+      (SELECT count(*) FROM incident_messages im WHERE im.incident_id = i.id)::int AS messages,
+      i.is_critical AS critical, i.critical_reason AS "criticalReason", fo.full_name AS "followUpOwner",
+      (SELECT f.body FROM incident_follow_ups f WHERE f.incident_id = i.id ORDER BY f.created_at DESC LIMIT 1) AS "lastFollowUp"
     FROM incidents i JOIN users u ON u.id = i.reported_by_id
     LEFT JOIN brigades b ON b.id = i.brigade_id LEFT JOIN stations s ON s.id = i.station_id
     LEFT JOIN sampling_units su ON su.id = i.sampling_unit_id LEFT JOIN users ru ON ru.id = i.resolved_by_id
-    WHERE i.project_id = ${projectId} ORDER BY i.occurred_at DESC`)).rows as {
+    LEFT JOIN users fo ON fo.id = i.follow_up_owner_id
+    WHERE i.project_id = ${projectId} ORDER BY i.is_critical DESC, i.occurred_at DESC`)).rows as {
       occurredAt: string; type: IncidentType; status: IncidentStatus; origin: string | null; brigadeName: string | null; stationCode: string | null;
       unitCode: string | null; reportedBy: string; description: string; proposedAction: string | null; decision: IncidentDecision | null;
       response: string | null; resolvedBy: string | null; resolvedAt: string | null; messages: number;
+      critical: boolean; criticalReason: string | null; followUpOwner: string | null; lastFollowUp: string | null;
     }[];
   addTable(wb, 'Alertas', [
     { header: 'Fecha y hora', width: 18, value: (a) => limaDateTime(a.occurredAt) },
     { header: 'Tipo', width: 22, value: (a) => INCIDENT_TYPE_LABELS[a.type] },
     { header: 'Estado', width: 14, value: (a) => INCIDENT_STATUS_LABELS[a.status] },
+    { header: 'Crítica', width: 10, value: (a) => (a.critical ? 'Sí' : null) },
+    { header: 'Motivo crítico', width: 30, value: (a) => a.criticalReason },
+    { header: 'Responsable del seguimiento', width: 26, value: (a) => a.followUpOwner },
+    { header: 'Último avance', width: 40, value: (a) => a.lastFollowUp },
     { header: 'Brigada', width: 20, value: (a) => a.brigadeName },
     { header: 'Estación', value: (a) => a.stationCode },
     { header: 'Unidad', width: 16, value: (a) => a.unitCode },

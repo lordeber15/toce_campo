@@ -5,7 +5,7 @@ import { z } from 'zod';
 export const INCIDENT_TYPES = [
   'metodologica', 'climatica', 'lluvia_intensa', 'tecnica', 'imposibilidad', 'logistica', 'seguridad', 'otra',
   // Logísticas (Sprint 1.6)
-  'accidente_movilidad', 'desperfecto_mecanico', 'hospedaje', 'equipos',
+  'accidente_movilidad', 'desperfecto_mecanico', 'hospedaje', 'equipos', 'falta_materiales',
 ] as const;
 export type IncidentType = (typeof INCIDENT_TYPES)[number];
 export const INCIDENT_TYPE_LABELS: Record<IncidentType, string> = {
@@ -21,13 +21,14 @@ export const INCIDENT_TYPE_LABELS: Record<IncidentType, string> = {
   desperfecto_mecanico: 'Desperfecto mecánico',
   hospedaje: 'Problema de hospedaje',
   equipos: 'Problema con equipos',
+  falta_materiales: 'Falta de materiales',
 };
 
 /** Tipos que ofrece cada formulario del teléfono. */
 export const SPECIALIST_INCIDENT_TYPES: IncidentType[] = ['metodologica', 'climatica', 'lluvia_intensa', 'tecnica', 'imposibilidad', 'logistica', 'seguridad', 'otra'];
 export const SUPERVISOR_INCIDENT_TYPES: IncidentType[] = ['metodologica', 'tecnica', 'seguridad', 'climatica', 'logistica', 'otra'];
-export const LOGISTICS_INCIDENT_TYPES: IncidentType[] = ['accidente_movilidad', 'desperfecto_mecanico', 'hospedaje', 'equipos', 'logistica', 'seguridad', 'otra'];
-export const isLogisticsIncident = (t: IncidentType) => (['accidente_movilidad', 'desperfecto_mecanico', 'hospedaje', 'equipos', 'logistica'] as IncidentType[]).includes(t);
+export const LOGISTICS_INCIDENT_TYPES: IncidentType[] = ['falta_materiales', 'accidente_movilidad', 'desperfecto_mecanico', 'hospedaje', 'equipos', 'logistica', 'seguridad', 'otra'];
+export const isLogisticsIncident = (t: IncidentType) => (['accidente_movilidad', 'desperfecto_mecanico', 'hospedaje', 'equipos', 'falta_materiales', 'logistica'] as IncidentType[]).includes(t);
 
 export const INCIDENT_ORIGINS = ['mi_jornada', 'estacion', 'unidad', 'supervision', 'logistica'] as const;
 export type IncidentOrigin = (typeof INCIDENT_ORIGINS)[number];
@@ -104,12 +105,64 @@ export const incidentMessageSchema = z.object({
   sentAt: isoDateTime,
 });
 
+/** Supervisor: coordinaciones con el equipo técnico al atender una incidencia (con quién, por qué medio y qué se acordó). */
+export const COORDINATION_CHANNELS = ['presencial', 'telefono', 'radio', 'whatsapp', 'otro'] as const;
+export type CoordinationChannel = (typeof COORDINATION_CHANNELS)[number];
+export const COORDINATION_CHANNEL_LABELS: Record<CoordinationChannel, string> = {
+  presencial: 'En persona',
+  telefono: 'Llamada',
+  radio: 'Radio',
+  whatsapp: 'WhatsApp',
+  otro: 'Otro medio',
+};
+
+export const incidentCoordinationSchema = z.object({
+  clientId: uuid,
+  withWhom: z.string().trim().min(2, 'Indica con quién se coordinó').max(200),
+  channel: z.enum(COORDINATION_CHANNELS).default('presencial'),
+  agreement: z.string().trim().min(3, 'Indica qué se acordó').max(4000),
+  occurredAt: isoDateTime,
+});
+export type IncidentCoordination = z.infer<typeof incidentCoordinationSchema>;
+
+export type IncidentCoordinationDto = {
+  id: string;
+  clientId: string;
+  authorId: string;
+  authorName: string;
+  withWhom: string;
+  channel: CoordinationChannel;
+  agreement: string;
+  occurredAt: string;
+};
+
 /** Respuesta de coordinación (web). */
 export const incidentDecisionSchema = z.object({
   decision: z.enum(INCIDENT_DECISIONS),
   response: z.string().trim().min(3, 'Escribe la respuesta').max(4000),
   correctiveAction: z.string().trim().max(2000).nullish(),
 });
+
+/** Jefe de proyecto / coordinación: marcan alertas críticas y asignan el seguimiento. */
+export const CRITICAL_MARKER_ROLES = ['coordinador', 'jefe_proyecto'] as const;
+
+export const incidentCriticalSchema = z
+  .object({
+    critical: z.boolean(),
+    reason: z.string().trim().max(2000).nullish(),
+  })
+  .refine((v) => !v.critical || (v.reason ?? '').length >= 3, { message: 'Indica por qué es crítica', path: ['reason'] });
+
+export const incidentFollowUpOwnerSchema = z.object({
+  ownerId: uuid.nullable(),
+  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida').nullish(),
+});
+
+export const incidentFollowUpNoteSchema = z.object({
+  body: z.string().trim().min(3, 'Escribe el avance').max(4000),
+});
+
+export type IncidentFollowUpDto = { id: string; authorId: string; authorName: string; body: string; createdAt: string };
 
 /** Reprogramación de una visita a partir de una alerta (web). */
 export const rescheduleSchema = z.object({
@@ -143,6 +196,8 @@ export type MyIncidentDto = {
   updatedAt: string;
   messages: IncidentMessageDto[];
   reschedules: { fromDate: string; toDate: string; reason: string; status: string; approvedByName: string | null }[];
+  /** Coordinaciones registradas por el supervisor en campo. */
+  coordinations: IncidentCoordinationDto[];
 };
 
 /** Alerta de una brigada que supervisa el usuario (registrada por otra persona). Se guarda en el teléfono. */

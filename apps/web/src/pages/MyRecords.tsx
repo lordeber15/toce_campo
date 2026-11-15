@@ -305,7 +305,7 @@ function logisticsSummary(r: MyLogisticsRow) {
     : r.entity === 'support' ? [d.fullName, d.dni ? `DNI ${d.dni}` : null, d.community]
       : r.entity === 'expense' ? [d.category, d.description, d.amount != null ? `${d.currency ?? 'PEN'} ${Number(d.amount).toFixed(2)}` : null, d.receiptNumber]
         : r.entity === 'sample' ? [d.code, d.description, d.status]
-          : [d.name, d.serial, d.status];
+          : [d.name, d.serial, d.status, d.receptionStatus === 'por_recibir' ? 'por recibir' : d.receptionStatus === 'recibido' ? 'recibido' : d.receptionStatus === 'incompleto' ? 'recibido incompleto' : null];
   return parts.filter((p) => p != null && p !== '').join(' · ') || 'Registro';
 }
 

@@ -4,10 +4,11 @@ import { Stack, router, useLocalSearchParams } from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import {
   EPP_ITEMS, EQUIPMENT_STATUSES, EQUIPMENT_STATUS_LABELS, EXPENSE_CATEGORIES, EXPENSE_CATEGORY_LABELS, LOGISTICS_ENTITIES,
-  LOGISTICS_ENTITY_LABELS, LOGISTICS_SCHEMAS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SUPPORT_DOCUMENTS, VEHICLE_MATERIALS,
+  LOGISTICS_ENTITY_LABELS, LOGISTICS_SCHEMAS, RECEPTION_STATUSES, RECEPTION_STATUS_LABELS, SAMPLE_STATUSES, SAMPLE_STATUS_LABELS, SUPPORT_DOCUMENTS, VEHICLE_MATERIALS,
   VEHICLE_STATUSES, VEHICLE_STATUS_LABELS,
   type IncidentType, type LogisticsEntity,
 } from '@toce/shared';
+import { useAuth } from '../../../lib/auth';
 import { useAttachments, useField, type LogisticsInput } from '../../../lib/field';
 import { todayLima, usePackageIndex } from '../../../lib/workPackage';
 import { Card, Check, Chip, Choice, Field, Label, Photos, PrimaryButton, Tags, formStyles as fs } from '../../../components/form';
@@ -21,7 +22,10 @@ const DEFAULTS: Record<LogisticsEntity, () => Draft> = {
   support: () => ({ fullName: '', dni: '', phone: '', community: '', eppItems: [], documentsDelivered: [], availableFrom: '', availableTo: '', isAvailable: true, notes: '' }),
   expense: () => ({ category: null, description: '', amount: '', currency: 'PEN', expenseDate: todayLima(), receiptNumber: '', vendor: '' }),
   sample: () => ({ code: '', description: '', quantity: '1', stationId: null, status: 'recolectada', shippedAt: null, carrier: '', trackingCode: '', destination: '', notes: '' }),
-  equipment: () => ({ name: '', serial: '', quantity: '1', status: 'operativo', notes: '' }),
+  equipment: () => ({
+    name: '', serial: '', quantity: '1', status: 'operativo', notes: '',
+    receptionStatus: null, receivedAt: null, receivedBy: '', receivedQuantity: '',
+  }),
 };
 
 /** Texto del formulario → datos del registro (vacíos a null, números desde texto con coma o punto). */
@@ -30,6 +34,11 @@ function toPayload(entity: LogisticsEntity, d: Draft): Draft {
   for (const [k, v] of Object.entries(d)) out[k] = typeof v === 'string' ? (v.trim() === '' ? null : v.trim()) : v;
   if (entity === 'expense') out.amount = d.amount === '' ? NaN : Number(String(d.amount).replace(',', '.'));
   if (entity === 'sample' || entity === 'equipment') out.quantity = Number.parseInt(String(d.quantity || '1'), 10);
+  if (entity === 'equipment') {
+    // Solo "incompleto" lleva la cantidad recibida; sin recepción no se guarda fecha ni quién recibió.
+    out.receivedQuantity = d.receptionStatus === 'incompleto' && String(d.receivedQuantity ?? '') !== '' ? Number.parseInt(String(d.receivedQuantity), 10) : null;
+    if (!d.receptionStatus || d.receptionStatus === 'por_recibir') { out.receivedAt = null; out.receivedBy = null; }
+  }
   if (entity === 'expense') out.currency = 'PEN';
   return out;
 }
@@ -39,6 +48,7 @@ export default function LogisticsRecordScreen() {
   const params = useLocalSearchParams<{ entity: LogisticsEntity; id?: string; brigadeId?: string }>();
   const entity = params.entity;
   const field = useField();
+  const { user } = useAuth();
   const index = usePackageIndex();
   const existing = params.id ? field.logistics.find((r) => r.clientId === params.id) : undefined;
   const brigades = useMemo(() => index?.pkg.brigades.filter((b) => b.myRoles.includes('logistico') || b.myRoles.includes('supervisor')) ?? [], [index]);
@@ -51,6 +61,7 @@ export default function LogisticsRecordScreen() {
       for (const k of Object.keys(base)) if (base[k] === null && typeof DEFAULTS[entity]()[k] === 'string') base[k] = '';
       if (entity === 'expense') base.amount = String(rest.amount ?? '');
       if (entity === 'sample' || entity === 'equipment') base.quantity = String(rest.quantity ?? 1);
+      if (entity === 'equipment') base.receivedQuantity = rest.receivedQuantity == null ? '' : String(rest.receivedQuantity);
       return base;
     }
     const base = DEFAULTS[entity]();
@@ -98,6 +109,12 @@ export default function LogisticsRecordScreen() {
     if (entity === 'equipment' && (draft.status === 'defectuoso' || draft.status === 'perdido')) {
       return { type: 'equipos', text: `Equipo ${draft.name}${draft.serial ? ` (serie ${draft.serial})` : ''} ${draft.status === 'perdido' ? 'perdido' : 'defectuoso'}.` };
     }
+    if (entity === 'equipment' && draft.receptionStatus === 'incompleto') {
+      const got = String(draft.receivedQuantity ?? '');
+      return { type: 'falta_materiales', text: `Llegó incompleto: ${draft.name}${got ? ` (${got} de ${draft.quantity})` : ''}.` };
+    }
+    const missing = (draft.missingMaterials as string[] | undefined) ?? [];
+    if (entity === 'vehicle' && missing.length) return { type: 'falta_materiales', text: `Faltan materiales en la movilidad: ${missing.join(', ')}.` };
     return null;
   };
 
@@ -265,8 +282,8 @@ export default function LogisticsRecordScreen() {
 
         {entity === 'equipment' && (
           <Card>
-            <Label>Equipo *</Label>
-            <Field value={str('name')} onChangeText={set('name')} placeholder="Ej.: GPS Garmin 64s" accessibilityLabel="Equipo" />
+            <Label>Equipo o material *</Label>
+            <Field value={str('name')} onChangeText={set('name')} placeholder="Ej.: GPS Garmin 64s, trampas Sherman" accessibilityLabel="Equipo o material" />
             <Label>N.º de serie</Label>
             <Field value={str('serial')} onChangeText={set('serial')} autoCapitalize="characters" accessibilityLabel="Número de serie" />
             <Label>Cantidad</Label>
@@ -275,6 +292,44 @@ export default function LogisticsRecordScreen() {
             <Choice options={EQUIPMENT_STATUSES} labels={EQUIPMENT_STATUS_LABELS} value={d.status as never} onChange={(v) => set('status')(v ?? 'operativo')} />
             <Label>Observaciones</Label>
             <Field value={str('notes')} onChangeText={set('notes')} multiline placeholder="Qué falla, desde cuándo…" accessibilityLabel="Observaciones" />
+          </Card>
+        )}
+        {entity === 'equipment' && (
+          <Card>
+            <Label hint="Cuando el equipo o material llega a la brigada.">Recepción</Label>
+            <Choice
+              options={RECEPTION_STATUSES}
+              labels={RECEPTION_STATUS_LABELS}
+              value={d.receptionStatus as never}
+              onChange={(v) => setD((p) => ({
+                ...p, receptionStatus: v,
+                // Al marcar recibido se completan la hora y quién recibe (se pueden cambiar).
+                receivedAt: v && v !== 'por_recibir' ? (p.receivedAt ?? new Date().toISOString()) : null,
+                receivedBy: v && v !== 'por_recibir' ? (str('receivedBy') || user?.fullName || '') : '',
+              }))}
+            />
+            {d.receptionStatus !== 'recibido' && d.receptionStatus !== 'incompleto' && (
+              <Button
+                title="Confirmar recepción completa"
+                variant="outline"
+                onPress={() => void submit({ receptionStatus: 'recibido', receivedAt: new Date().toISOString(), receivedBy: str('receivedBy') || user?.fullName || '' })}
+              />
+            )}
+            {(d.receptionStatus === 'recibido' || d.receptionStatus === 'incompleto') && (
+              <>
+                <Label>¿Quién recibió?</Label>
+                <Field value={str('receivedBy')} onChangeText={set('receivedBy')} placeholder="Nombre de quien recibe" accessibilityLabel="Quién recibió" />
+                {d.receptionStatus === 'incompleto' && (
+                  <>
+                    <Label hint={`De ${str('quantity') || '1'} enviados.`}>Cantidad recibida</Label>
+                    <Field value={str('receivedQuantity')} onChangeText={(v) => set('receivedQuantity')(v.replace(/\D/g, ''))} keyboardType="number-pad" accessibilityLabel="Cantidad recibida" />
+                  </>
+                )}
+                {!!d.receivedAt && (
+                  <Text style={fs.small}>Recibido: {new Date(d.receivedAt as string).toLocaleString('es-PE', { timeZone: 'America/Lima', dateStyle: 'medium', timeStyle: 'short' })}</Text>
+                )}
+              </>
+            )}
           </Card>
         )}
 
