@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Stack, router } from 'expo-router';
 import { useAuth } from '../lib/auth';
@@ -28,17 +28,16 @@ export function SupervisorHome() {
   const pos = usePosition();
   const roleView = useRoleView();
   const today = todayLima();
-  const [date, setDate] = useState(today);
+  const [picked, setDate] = useState(today);
 
   const brigades = useMemo(() => pkg?.brigades.filter((b) => b.myRoles.includes('supervisor')) ?? [], [pkg]);
   const ids = useMemo(() => new Set(brigades.map((b) => b.id)), [brigades]);
   const dayOf = (d: string) => (index?.day(d) ?? []).filter((it) => ids.has(it.schedule.brigadeId));
   const dates = useMemo(() => [...new Set([today, ...(index?.dates ?? [])])].sort(), [today, index]);
+  // Si el día elegido sale del paquete, se muestra hoy.
+  const date = dates.includes(picked) ? picked : today;
   const items = dayOf(date);
 
-  useEffect(() => {
-    if (!dates.includes(date)) setDate(today);
-  }, [dates, date, today]);
 
   const unread = field.unreadBrigadeIncidents + field.unreadIncidents;
   const openBrigade = field.brigadeIncidents.filter((i) => OPEN.has(i.status)).length;

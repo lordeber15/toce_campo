@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { formatUtm, latLngToUtm, type FieldRecord, type WpMethod } from '@toce/shared';
-import { useField, type LocalAttachment, type LocalExecution } from '../../../lib/field';
+import { useAttachments, useField, type LocalAttachment, type LocalExecution } from '../../../lib/field';
 import { usePosition } from '../../../lib/location';
 import { todayLima, usePackageIndex } from '../../../lib/workPackage';
 import { Pill, UNIT_STATUS } from '../../../components/field';
@@ -18,7 +18,6 @@ export default function UnitScreen() {
   const index = usePackageIndex();
   const field = useField();
   const pos = usePosition();
-  const [files, setFiles] = useState<LocalAttachment[]>([]);
   const [starting, setStarting] = useState(false);
   const roleView = useRoleView();
 
@@ -27,13 +26,7 @@ export default function UnitScreen() {
   const method = unit ? index?.methods.get(unit.methodId) : undefined;
   const station = unit ? index?.stations.get(unit.stationId) : undefined;
 
-  const loadFiles = useCallback(async () => {
-    setFiles(execution ? await field.attachmentsOf(execution.clientId) : []);
-  }, [execution?.clientId, field.attachmentsOf]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    void loadFiles();
-  }, [loadFiles, field.rev]);
+  const [files, loadFiles] = useAttachments(execution?.clientId);
 
   const required = useMemo(() => (method ? requiredPhotos(method) : []), [method]);
   const missing = required.filter((r) => !files.some((f) => f.kind === r.kind && (r.kind === 'foto_metodo' || f.slotKey === r.key)));
@@ -274,13 +267,14 @@ function recordSummary(r: FieldRecord, m: WpMethod): string {
 const hhmm = (iso: string) => new Date(iso).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Lima' });
 
 function ExecutionInfo({ execution: e, method }: { execution: LocalExecution; method: WpMethod }) {
-  const [, tick] = useState(0);
+  // Hora actual para el tiempo transcurrido; se actualiza cada 30 s mientras la unidad sigue abierta.
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     if (e.finishedAt) return;
-    const iv = setInterval(() => tick((v) => v + 1), 30000);
+    const iv = setInterval(() => setNow(Date.now()), 30000);
     return () => clearInterval(iv);
   }, [e.finishedAt]);
-  const end = e.finishedAt ? new Date(e.finishedAt).getTime() : Date.now();
+  const end = e.finishedAt ? new Date(e.finishedAt).getTime() : now;
   const min = Math.max(0, Math.floor((end - new Date(e.startedAt).getTime()) / 60000));
   return (
     <View style={{ gap: 6 }}>

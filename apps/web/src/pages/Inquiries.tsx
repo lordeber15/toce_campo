@@ -336,7 +336,7 @@ function FileLink({ file }: { file: InquiryFile }) {
   return (
     <>
       <button type="button" className="chip" onClick={() => void open()} title="Abrir" style={{ cursor: 'pointer', border: 0 }}>
-        {icon} {file.name ?? 'archivo'}{file.sizeBytes ? ` (${mb(file.sizeBytes)})` : ''}
+        {icon} {file.name ?? (file.kind === 'foto' ? 'Foto de campo' : 'archivo')}{file.sizeBytes ? ` (${mb(file.sizeBytes)})` : ''}
       </button>
       <ErrorBox error={error} />
     </>

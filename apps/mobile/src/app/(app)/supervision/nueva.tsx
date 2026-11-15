@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import * as Crypto from 'expo-crypto';
 import {
   INCIDENT_MOMENT_LABELS, INCIDENT_MOMENTS, INCIDENT_TYPE_LABELS, SUPERVISOR_INCIDENT_TYPES, type IncidentMoment, type IncidentType,
 } from '@toce/shared';
-import { useField, type LocalAttachment } from '../../../lib/field';
+import { useAttachments, useField } from '../../../lib/field';
 import { usePosition } from '../../../lib/location';
 import { todayLima, usePackageIndex } from '../../../lib/workPackage';
 import { Card, Check, Chip, Choice, Field, Label, Photos, PrimaryButton, formStyles as fs } from '../../../components/form';
@@ -42,13 +42,9 @@ export default function SupervisionIncidentScreen() {
   const [corrective, setCorrective] = useState(existing?.correctiveAction ?? '');
   const [resolved, setResolved] = useState(!!existing?.resolutionNotes);
   const [resolution, setResolution] = useState(existing?.resolutionNotes ?? '');
-  const [photos, setPhotos] = useState<LocalAttachment[]>([]);
   const [saving, setSaving] = useState(false);
 
-  const loadPhotos = useCallback(async () => setPhotos(await field.attachmentsOf(clientId)), [clientId, field.attachmentsOf]);
-  useEffect(() => {
-    void loadPhotos();
-  }, [loadPhotos, field.rev]);
+  const [photos] = useAttachments(clientId);
 
   // Estaciones programadas para la brigada (hoy primero).
   const stations = useMemo(() => {

@@ -140,7 +140,7 @@ const fieldRoutes: FastifyPluginAsync = async (app) => {
       const userId = req.user.sub;
       // Dueño: ejecución de una unidad o alerta. Debe estar sincronizado antes que sus archivos.
       type Owner = {
-        type: 'execution' | 'incident' | 'logistics'; id: string; by: string; stationId: string | null; unitId: string | null; projectId: string;
+        type: 'execution' | 'incident' | 'logistics' | 'inquiry_message'; id: string; by: string; stationId: string | null; unitId: string | null; projectId: string;
         folder?: string;
       };
       let owner: Owner | undefined;
@@ -149,6 +149,13 @@ const fieldRoutes: FastifyPluginAsync = async (app) => {
           SELECT 'execution' AS type, e.id, e.specialist_id AS "by", e.station_id AS "stationId", e.sampling_unit_id AS "unitId", s.project_id AS "projectId"
           FROM executions e JOIN stations s ON s.id = e.station_id WHERE e.client_id = ${a.executionClientId}`)).rows[0] as Owner | undefined;
         if (!owner) throw conflict('Primero se debe sincronizar el registro de la unidad');
+      } else if (a.inquiryReplyClientId) {
+        // Foto de una respuesta a coordinación: va con el mensaje (y la consulta) ya sincronizados.
+        owner = (await db.execute(sql`
+          SELECT 'inquiry_message' AS type, im.id, im.author_id AS "by", q.station_id AS "stationId", NULL::uuid AS "unitId",
+            q.project_id AS "projectId", q.id::text AS folder
+          FROM inquiry_messages im JOIN inquiries q ON q.id = im.inquiry_id WHERE im.client_id = ${a.inquiryReplyClientId}`)).rows[0] as Owner | undefined;
+        if (!owner) throw conflict('Primero se debe sincronizar la respuesta');
       } else if (a.logisticsClientId) {
         // Registro logístico: se busca en las tablas de logística por su clientId.
         const union = sql.join(
@@ -188,7 +195,9 @@ const fieldRoutes: FastifyPluginAsync = async (app) => {
         ? `${keys.project}/${keys.station}/${keys.unit}`
         : owner.type === 'logistics'
           ? `${keys.project}/logistica/${owner.folder}/${a.logisticsClientId}`
-          : `${keys.project}/${keys.station ?? 'general'}/alertas/${a.incidentClientId}`;
+          : owner.type === 'inquiry_message'
+            ? `${keys.project}/consultas/${owner.folder}`
+            : `${keys.project}/${keys.station ?? 'general'}/alertas/${a.incidentClientId}`;
       const objectKey = `${base}/${folder}/${a.clientId}.${ext}`;
       // Las notas de voz no tienen copia comprimida: el original es el mismo archivo.
       const originalKey = a.kind === 'audio' ? null : `${base}/originales/${a.clientId}.${ext}`;
@@ -208,6 +217,7 @@ const fieldRoutes: FastifyPluginAsync = async (app) => {
         | Omit<AttachmentMetaResult, 'clientId'>
         | undefined;
       if (!row) throw conflict('Archivo registrado en paralelo; reintenta');
+      if (ex.type === 'inquiry_message') await db.execute(sql`UPDATE inquiries SET updated_at = now() WHERE id = ${ex.folder!}::uuid`);
       return { ...row, clientId: a.clientId };
     },
   );

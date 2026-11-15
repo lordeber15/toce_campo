@@ -114,14 +114,14 @@ export function UploadBar({ online }: { online: boolean }) {
 /** "Se enviaron N registros" tras una sincronización con envíos (se oculta solo). */
 export function SentBanner() {
   const { lastReport } = useField();
-  const [visible, setVisible] = useState<string | null>(null);
+  // Se muestra cada aviso nuevo y se oculta a los 8 s.
+  const [hiddenAt, setHiddenAt] = useState<string | null>(null);
   useEffect(() => {
     if (!lastReport) return;
-    setVisible(lastReport.at);
-    const t = setTimeout(() => setVisible(null), 8000);
+    const t = setTimeout(() => setHiddenAt(lastReport.at), 8000);
     return () => clearTimeout(t);
   }, [lastReport]);
-  if (!lastReport || visible !== lastReport.at) return null;
+  if (!lastReport || hiddenAt === lastReport.at) return null;
   const parts = [
     lastReport.records ? `${lastReport.records} registro${lastReport.records > 1 ? 's' : ''}` : null,
     lastReport.files ? `${lastReport.files} archivo${lastReport.files > 1 ? 's' : ''}` : null,

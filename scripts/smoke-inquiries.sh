@@ -76,6 +76,19 @@ check "adjunto en el mensaje" "$(echo "$D" | js "p.thread.find(m=>m.id==='$MID')
 check "el especialista lo descarga" "$(code "$(curl -s "$B/inquiry-files/$FID/url" -H "authorization: Bearer $ANA" | js 'p.url')")" 200
 check "lo ve en su teléfono" "$(curl -s "$B/field/inquiries/mine" -H "authorization: Bearer $ANA" | js "p.find(q=>q.id==='$ID').thread.flatMap(m=>m.files).length")" 1
 
+echo "Foto desde el teléfono"
+PH=$(node -e 'console.log(crypto.randomUUID())')
+META="{\"clientId\":\"$PH\",\"inquiryReplyClientId\":\"$CID\",\"kind\":\"foto\",\"mimeType\":\"image/jpeg\",\"takenAt\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",\"lat\":-12.05,\"lng\":-77.04}"
+check "otra persona no adjunta a mi respuesta: 403" "$(code -X POST "$B/field/attachments" -H "authorization: Bearer $JP" -H 'content-type: application/json' -d "$META")" 403
+post "/field/attachments" "$ANA" "$META" >/dev/null
+printf '\xff\xd8\xff\xe0 foto de prueba' > "$TMP/f.jpg"
+curl -s -X PUT "$B/field/attachments/$PH/content?variant=compressed" -H "authorization: Bearer $ANA" -H 'content-type: image/jpeg' --data-binary @"$TMP/f.jpg" >/dev/null
+D=$(curl -s "$B/inquiries/$ID" -H "authorization: Bearer $COO")
+check "la foto queda en la respuesta del teléfono" "$(echo "$D" | js "p.thread.find(m=>m.clientId==='$CID').files.map(f=>f.kind+':'+f.uploadStatus).join()")" "foto:subido"
+FPH=$(echo "$D" | js "p.thread.find(m=>m.clientId==='$CID').files[0].id")
+check "coordinación la abre" "$(code "$(curl -s "$B/inquiry-files/$FPH/url" -H "authorization: Bearer $COO" | js 'p.url')")" 200
+check "guardada en la carpeta de la consulta" "$(psql "select object_key like '%/consultas/$ID/fotos/$PH.jpg' from attachments where client_id='$PH'")" t
+
 echo "Cierre"
 post "/inquiries/$ID/close" "$COO" '{}' >/dev/null
 check "cerrada: no admite mensajes de la web" "$(code -X POST "$B/inquiries/$ID/messages" -H "authorization: Bearer $COO" -H 'content-type: application/json' -d '{"kind":"seguimiento","body":"x"}')" 409

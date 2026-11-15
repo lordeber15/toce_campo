@@ -20,9 +20,8 @@ export function PinDots({ length, maxLength, error }: { length: number; maxLengt
   );
 }
 
-export function PinPad({ onDigit, onDelete, extraKey, disabled }: Props) {
-  const rows = [['1', '2', '3'], ['4', '5', '6'], ['7', '8', '9']];
-  const Key = ({ label, onPress, a11y }: { label: string; onPress: () => void; a11y?: string }) => (
+function Key({ label, onPress, a11y, disabled }: { label: string; onPress: () => void; a11y?: string; disabled?: boolean }) {
+  return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={a11y ?? label}
@@ -33,17 +32,21 @@ export function PinPad({ onDigit, onDelete, extraKey, disabled }: Props) {
       <Text style={[s.keyText, label.length > 1 && s.keySmall]}>{label}</Text>
     </Pressable>
   );
+}
+
+export function PinPad({ onDigit, onDelete, extraKey, disabled }: Props) {
+  const rows = [['1', '2', '3'], ['4', '5', '6'], ['7', '8', '9']];
   return (
     <View style={s.pad}>
       {rows.map((r) => (
         <View key={r[0]} style={s.row}>
-          {r.map((d) => <Key key={d} label={d} onPress={() => onDigit(d)} />)}
+          {r.map((d) => <Key key={d} label={d} onPress={() => onDigit(d)} disabled={disabled} />)}
         </View>
       ))}
       <View style={s.row}>
-        {extraKey ? <Key label={extraKey.label} onPress={extraKey.onPress} a11y={extraKey.accessibilityLabel} /> : <View style={s.key} />}
-        <Key label="0" onPress={() => onDigit('0')} />
-        <Key label="Borrar" onPress={onDelete} a11y="Borrar dígito" />
+        {extraKey ? <Key label={extraKey.label} onPress={extraKey.onPress} a11y={extraKey.accessibilityLabel} disabled={disabled} /> : <View style={s.key} />}
+        <Key label="0" onPress={() => onDigit('0')} disabled={disabled} />
+        <Key label="Borrar" onPress={onDelete} a11y="Borrar dígito" disabled={disabled} />
       </View>
     </View>
   );

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Linking, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, router, useLocalSearchParams } from 'expo-router';
+import { Image } from 'expo-image';
 import { INQUIRY_CHANNEL_LABELS, INQUIRY_MESSAGE_KIND_LABELS, type InquiryFile } from '@toce/shared';
 import { api } from '../../../lib/api';
 import { useAuth } from '../../../lib/auth';
@@ -35,13 +36,18 @@ export default function InquiryScreen() {
   const thread = [
     ...q.thread.map((m) => ({
       key: m.id, mine: m.kind === 'respuesta', body: m.body, at: m.sentAt, files: m.files, pending: false, error: null as string | null,
+      // Fotos tomadas aquí: se ven desde el teléfono aunque aún no se suban.
+      local: (q.photos[m.clientId] ?? []).filter((p) => !p.freed),
       meta: [
         m.onBehalfOfName ? `${m.onBehalfOfName} (anotó ${m.authorName})` : m.authorId === user?.id ? 'Tú' : m.authorName,
         INQUIRY_MESSAGE_KIND_LABELS[m.kind],
         m.channel !== 'app' ? INQUIRY_CHANNEL_LABELS[m.channel] : null,
       ].filter(Boolean).join(' · '),
     })),
-    ...q.outbox.map((m) => ({ key: m.clientId, mine: true, body: m.body, at: m.sentAt, files: [] as InquiryFile[], pending: true, error: m.error, meta: 'Tú · por enviar' })),
+    ...q.outbox.map((m) => ({
+      key: m.clientId, mine: true, body: m.body, at: m.sentAt, files: [] as InquiryFile[], pending: true, error: m.error, meta: 'Tú · por enviar',
+      local: q.photos[m.clientId] ?? [],
+    })),
   ].sort((a, b) => a.at.localeCompare(b.at));
 
   const send = async () => {
@@ -79,10 +85,16 @@ export default function InquiryScreen() {
           {thread.map((m) => (
             <View key={m.key} style={[s.msg, m.mine ? s.msgMine : s.msgTheirs]}>
               <Text style={s.msgMeta}>{m.meta} · {shortDateTime(m.at)}</Text>
-              <Text style={s.body}>{m.body}</Text>
-              {m.files.map((f) => (
+              {!(m.local.length && m.body === 'Foto') && <Text style={s.body}>{m.body}</Text>}
+              {m.local.length > 0 && (
+                <View style={s.photos}>
+                  {m.local.map((p) => <Image key={p.clientId} source={{ uri: p.path }} style={s.photo} contentFit="cover" accessibilityLabel="Foto enviada" />)}
+                </View>
+              )}
+              {m.local.some((p) => !p.uploaded) && <Text style={s.small}>Foto por subir</Text>}
+              {m.files.filter((f) => !m.local.length || f.kind !== 'foto').map((f) => (
                 <Pressable key={f.id} onPress={() => void openFile(f)} accessibilityRole="link" hitSlop={6}>
-                  <Text style={s.file}>{f.kind === 'foto' ? 'Foto' : f.kind === 'audio' ? 'Audio' : 'Documento'}: {f.name ?? 'archivo'}</Text>
+                  <Text style={s.file}>{f.kind === 'foto' ? 'Foto' : f.kind === 'audio' ? 'Audio' : 'Documento'}{f.name ? `: ${f.name}` : ''}</Text>
                 </Pressable>
               ))}
               {!!m.error && <Text style={[s.small, { color: colors.danger }]}>No se pudo enviar: {m.error}</Text>}
@@ -100,6 +112,14 @@ export default function InquiryScreen() {
                 style={s.input}
                 accessibilityLabel="Respuesta a coordinación"
               />
+              <Pressable
+                onPress={() => router.push({ pathname: '/camara', params: { exec: q.id, owner: 'inquiry', kind: 'foto', label: 'Foto para coordinación' } })}
+                style={s.photoBtn}
+                accessibilityRole="button"
+                accessibilityLabel="Enviar una foto"
+              >
+                <Text style={s.photoBtnText}>Foto</Text>
+              </Pressable>
               <Pressable onPress={() => void send()} disabled={!reply.trim()} style={[s.send, !reply.trim() && { opacity: 0.5 }]} accessibilityRole="button">
                 <Text style={s.sendText}>Enviar</Text>
               </Pressable>
@@ -107,7 +127,7 @@ export default function InquiryScreen() {
           ) : (
             <Text style={s.small}>Coordinación cerró esta consulta.</Text>
           )}
-          {!online && q.status !== 'cerrada' && <Text style={s.small}>Sin conexión: tu respuesta se guarda y se envía al conectarte.</Text>}
+          {!online && q.status !== 'cerrada' && <Text style={s.small}>Sin conexión: tu respuesta y tus fotos se guardan y se envían al conectarte.</Text>}
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -132,4 +152,8 @@ const s = StyleSheet.create({
   input: { flex: 1, borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 15, color: colors.text, maxHeight: 120 },
   send: { backgroundColor: colors.primary, borderRadius: 10, paddingHorizontal: 16, paddingVertical: 12 },
   sendText: { color: colors.white, fontWeight: '700' },
+  photoBtn: { borderWidth: 1, borderColor: colors.primary, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11 },
+  photoBtnText: { color: colors.primary, fontWeight: '700' },
+  photos: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 },
+  photo: { width: 120, height: 120, borderRadius: 8, backgroundColor: '#E5E8E2' },
 });

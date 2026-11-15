@@ -69,7 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [attemptsLeft, setAttemptsLeft] = useState(PIN_MAX_ATTEMPTS);
   const backgroundAt = useRef<number | null>(null);
   const statusRef = useRef<AuthStatus>('loading');
-  statusRef.current = status;
+  useEffect(() => { statusRef.current = status; }, [status]);
 
   const forceSignOut = useCallback(async (msg: string) => {
     await store.wipeAuth();

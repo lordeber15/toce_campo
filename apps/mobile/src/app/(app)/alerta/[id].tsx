@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { INCIDENT_DECISION_LABELS, INCIDENT_MOMENT_LABELS, INCIDENT_TYPE_LABELS } from '@toce/shared';
 import { useAuth } from '../../../lib/auth';
-import { useField, type LocalAttachment } from '../../../lib/field';
+import { useAttachments, useField } from '../../../lib/field';
 import { usePackageIndex } from '../../../lib/workPackage';
 import { incidentState, shortDateTime } from '../../../components/alerts';
 import { Pill } from '../../../components/field';
@@ -18,14 +18,10 @@ export default function AlertDetailScreen() {
   const { user } = useAuth();
   const field = useField();
   const index = usePackageIndex();
-  const [photos, setPhotos] = useState<LocalAttachment[]>([]);
   const [reply, setReply] = useState('');
   const incident = field.incidents.find((i) => i.clientId === id);
 
-  const load = useCallback(async () => setPhotos(await field.attachmentsOf(id)), [id, field.attachmentsOf]);
-  useEffect(() => {
-    void load();
-  }, [load, field.rev]);
+  const [photos] = useAttachments(id);
   // Al abrirla se marcan como vistas las novedades de coordinación.
   useEffect(() => {
     if (incident?.unread) void field.markIncidentSeen(incident.clientId);

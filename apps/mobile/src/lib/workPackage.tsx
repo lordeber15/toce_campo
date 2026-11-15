@@ -30,20 +30,26 @@ export function WorkPackageProvider({ children }: { children: ReactNode }) {
   const { user, status, online } = useAuth();
   const [pkg, setPkg] = useState<WorkPackage | null>(null);
   const [downloadedAt, setDownloadedAt] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !!user?.id);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef<Promise<void> | null>(null);
   const userId = user?.id ?? null;
 
-  // Carga el paquete guardado del usuario actual. Un usuario por teléfono: se borra el de otros.
-  useEffect(() => {
-    let cancelled = false;
+  // Al cambiar de usuario se descarta lo que había en pantalla (se ajusta durante el render, sin efecto).
+  const [loadedFor, setLoadedFor] = useState(userId);
+  if (loadedFor !== userId) {
+    setLoadedFor(userId);
     setPkg(null);
     setDownloadedAt(null);
     setError(null);
-    if (!userId) return setLoading(false);
-    setLoading(true);
+    setLoading(!!userId);
+  }
+
+  // Carga el paquete guardado del usuario actual. Un usuario por teléfono: se borra el de otros.
+  useEffect(() => {
+    if (!userId) return;
+    let cancelled = false;
     (async () => {
       const db = await getDb();
       await db.runAsync('DELETE FROM work_package WHERE user_id <> ?', userId);

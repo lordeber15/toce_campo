@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import { Stack, router } from 'expo-router';
 import { useAuth } from '../../lib/auth';
@@ -33,18 +33,16 @@ function MiJornada() {
   const pos = usePosition();
   const roleView = useRoleView();
   const today = todayLima();
-  const [date, setDate] = useState(today);
+  const [picked, setDate] = useState(today);
 
   // Días con programación, siempre incluyendo hoy.
   const dates = useMemo(() => [...new Set([today, ...(index?.dates ?? [])])].sort(), [today, index]);
+  // Si el día elegido sale del paquete (p. ej. cambió la fecha), se muestra hoy.
+  const date = dates.includes(picked) ? picked : today;
   const items = useMemo(() => index?.day(date) ?? [], [index, date]);
   const nextDate = dates.find((d) => d > date && (index?.day(d).length ?? 0) > 0);
   const multiBrigade = (pkg?.brigades.length ?? 0) > 1;
 
-  // Si el día elegido sale del paquete (p. ej. cambió la fecha), vuelve a hoy.
-  useEffect(() => {
-    if (!dates.includes(date)) setDate(today);
-  }, [dates, date, today]);
 
   return (
     <ScrollView

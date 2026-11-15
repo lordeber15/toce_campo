@@ -72,6 +72,8 @@ export const attachmentMetaSchema = z.object({
   executionClientId: uuid.nullish(),
   incidentClientId: uuid.nullish(),
   logisticsClientId: uuid.nullish(),
+  /** Respuesta propia a una consulta de coordinación. */
+  inquiryReplyClientId: uuid.nullish(),
   kind: z.enum(ATTACHMENT_KINDS_FIELD),
   slotKey: z.string().max(40).nullish(),
   mimeType: z.enum(['image/jpeg', 'audio/mp4', 'audio/m4a', 'audio/aac']),
@@ -87,8 +89,8 @@ export const attachmentMetaSchema = z.object({
   takenAt: isoDateTime,
   caption: z.string().max(500).nullish(),
 }).refine(
-  (a) => [a.executionClientId, a.incidentClientId, a.logisticsClientId].filter(Boolean).length === 1,
-  'Indica la ejecución, la alerta o el registro logístico (solo uno)',
+  (a) => [a.executionClientId, a.incidentClientId, a.logisticsClientId, a.inquiryReplyClientId].filter(Boolean).length === 1,
+  'Indica la ejecución, la alerta, el registro logístico o la respuesta (solo uno)',
 );
 export type AttachmentMeta = z.infer<typeof attachmentMetaSchema>;
 

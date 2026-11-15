@@ -14,7 +14,7 @@ import { colors } from '../../theme';
 /** Cámara del registro: toma la foto, la sella (UTM, fecha, lugar, estación, unidad) y vuelve a la unidad. */
 export default function CameraScreen() {
   const { exec, kind, slot, label, owner } = useLocalSearchParams<{
-    exec: string; kind: 'foto' | 'foto_metodo' | 'comprobante'; slot?: string; label: string; owner?: 'incident' | 'logistics';
+    exec: string; kind: 'foto' | 'foto_metodo' | 'comprobante'; slot?: string; label: string; owner?: 'incident' | 'logistics' | 'inquiry';
   }>();
   const [perm, requestPerm] = useCameraPermissions();
   const cam = useRef<CameraView>(null);
@@ -24,12 +24,15 @@ export default function CameraScreen() {
   const field = useField();
   const index = usePackageIndex();
   const insets = useSafeAreaInsets();
-  // Dueño de la foto: la ejecución de una unidad, una alerta (evidencia) o un registro logístico.
+  // Dueño de la foto: la ejecución de una unidad, una alerta (evidencia), un registro logístico
+  // o una consulta de coordinación (exec = id de la consulta; la foto va como una respuesta nueva).
   const execution = owner ? undefined : field.executions.find((e) => e.clientId === exec);
   const incident = owner === 'incident' ? field.incidents.find((i) => i.clientId === exec) : undefined;
   const logRecord = owner === 'logistics' ? field.logistics.find((r) => r.clientId === exec) : undefined;
+  const inquiry = owner === 'inquiry' ? field.inquiries.find((q) => q.id === exec) : undefined;
   const logData = logRecord?.data as { stationId?: string | null; plate?: string | null; code?: string; fullName?: string; name?: string; description?: string } | undefined;
-  const stationId = execution?.stationId ?? incident?.stationId ?? logData?.stationId ?? null;
+  const inquiryStation = inquiry?.stationCode && index ? [...index.stations.values()].find((x) => x.code === inquiry.stationCode) : undefined;
+  const stationId = execution?.stationId ?? incident?.stationId ?? logData?.stationId ?? inquiryStation?.id ?? null;
   const station = stationId ? index?.stations.get(stationId) : undefined;
   const brigadeProject = logRecord ? index?.brigades.get(logRecord.brigadeId)?.projectId : undefined;
   const projectId = station?.projectId ?? incident?.projectId ?? brigadeProject;
@@ -39,7 +42,7 @@ export default function CameraScreen() {
   const logLabel = logRecord
     ? `${LOGISTICS_ENTITY_LABELS[logRecord.entity].one} · ${logData?.plate ?? logData?.code ?? logData?.fullName ?? logData?.name ?? logData?.description ?? ''}`
     : '';
-  const title = ownerLabel || logLabel;
+  const title = ownerLabel || logLabel || (inquiry ? `Consulta · ${inquiry.subject}` : '');
 
   // La primera vez pide el permiso directamente.
   useEffect(() => {
@@ -62,7 +65,7 @@ export default function CameraScreen() {
   const p = pos.status === 'ok' ? pos.position : null;
 
   const shoot = async () => {
-    if (!cam.current || busy || (!execution && !incident && !logRecord)) return;
+    if (!cam.current || busy || (!execution && !incident && !logRecord && !inquiry)) return;
     setBusy(true);
     try {
       const takenAt = new Date();
@@ -81,10 +84,13 @@ export default function CameraScreen() {
         `${when}${p?.altitude != null ? ` · Alt. ${Math.round(p.altitude).toLocaleString('es-PE')} m` : ''}`,
         where || station?.code || '',
       ].filter(Boolean);
-      const photo = await processPhoto(pic.uri, { width: pic.width, height: pic.height }, stamp, exec, clientId);
+      // Consulta: la foto se envía como una respuesta propia (se guarda y sube aunque no haya señal).
+      const ownerId = inquiry ? Crypto.randomUUID() : exec;
+      const photo = await processPhoto(pic.uri, { width: pic.width, height: pic.height }, stamp, ownerId, clientId);
+      if (inquiry) await field.sendInquiryReply(inquiry.id, 'Foto', ownerId);
       await field.addAttachment(
         {
-          clientId, executionClientId: exec, ownerType: incident ? 'incident' : logRecord ? 'logistics' : 'execution', kind,
+          clientId, executionClientId: ownerId, ownerType: incident ? 'incident' : logRecord ? 'logistics' : inquiry ? 'inquiry_message' : 'execution', kind,
           slotKey: slot ?? (kind === 'foto_metodo' ? 'metodo' : null),
           mimeType: 'image/jpeg', path: photo.compressedPath, originalPath: photo.originalPath,
           sizeBytes: photo.sizeBytes, originalSizeBytes: photo.originalSizeBytes, width: photo.width, height: photo.height,

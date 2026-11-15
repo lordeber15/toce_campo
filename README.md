@@ -126,7 +126,7 @@ La app abre la vista del rol principal: **Mi jornada** (especialista / jefe de b
 **Web → Consultas** (coordinador, jefe de proyecto y supervisor):
 
 - **Nueva consulta**: brigada, persona consultada (jefe, integrantes, supervisor o logístico), estación y método opcionales, asunto y medio.
-  - **Por la app**: llega al teléfono al sincronizar. La persona responde desde **Consultas de coordinación** en su inicio, aunque no tenga señal; la respuesta se envía al conectarse.
+  - **Por la app**: llega al teléfono al sincronizar. La persona responde desde **Consultas de coordinación** en su inicio, con texto o con **fotos** (cámara con sello UTM), aunque no tenga señal; todo se envía al conectarse.
   - **Por llamada, WhatsApp, radio o en persona**: queda constancia de lo preguntado y, si ya respondió, de la respuesta.
 - **En cada consulta**:
   - **Pedir más información**: vuelve a quedar esperando respuesta.
@@ -168,9 +168,8 @@ La app abre la vista del rol principal: **Mi jornada** (especialista / jefe de b
 **Hecho:** Fase 1 (operación de campo), Fase 2 (supervisión web: avance, alertas, consultas, reprogramaciones, reportes y Excel) y sección 6 (documentos y evidencias).
 
 **Pendiente, en este orden:**
-1. Desplegar en el VPS la sección 6 (migración 0007).
-2. Catálogo de especies (falta el Excel).
-3. Menores: actualizar PostGIS, refactorizar los avisos de lint del móvil, respuestas con foto en consultas desde el teléfono.
+1. Actualizar PostGIS (por confirmar: implica cambiar la imagen de la base de datos).
+2. Catálogo de especies (falta el Excel), al final.
 
 **Después (Fase 3, postergada por decisión del 2026-11-14):** transcripción de audios y extracción de información,
 clasificación de observaciones y validación con IA, cálculos estadísticos y gráficos, y reportes Word.

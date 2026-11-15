@@ -32,9 +32,11 @@ export function VoiceNotes({ execution, notes, position, disabled, onChange }: {
   const [current, setCurrent] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState<Date | null>(null);
 
+  // Al terminar la reproducción se suelta la nota actual.
   useEffect(() => {
-    if (playing.didJustFinish) setCurrent(null);
-  }, [playing.didJustFinish]);
+    const sub = player.addListener('playbackStatusUpdate', (st) => { if (st.didJustFinish) setCurrent(null); });
+    return () => sub.remove();
+  }, [player]);
 
   const start = async () => {
     const perm = await requestRecordingPermissionsAsync();

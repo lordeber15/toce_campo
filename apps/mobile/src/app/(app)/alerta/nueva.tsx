@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
@@ -7,7 +7,7 @@ import {
   INCIDENT_MOMENT_LABELS, INCIDENT_MOMENTS, INCIDENT_TYPE_LABELS, LOGISTICS_INCIDENT_TYPES, SPECIALIST_INCIDENT_TYPES,
   type IncidentMoment, type IncidentType,
 } from '@toce/shared';
-import { useField, type LocalAttachment } from '../../../lib/field';
+import { useAttachments, useField } from '../../../lib/field';
 import { usePosition } from '../../../lib/location';
 import { todayLima, usePackageIndex } from '../../../lib/workPackage';
 import { colors, radius } from '../../../theme';
@@ -37,7 +37,6 @@ export default function NewAlertScreen() {
   const [description, setDescription] = useState(params.text ?? '');
   const [proposed, setProposed] = useState(params.notDone ? 'Reprogramar la actividad' : '');
   const [notDone, setNotDone] = useState(params.notDone === '1');
-  const [photos, setPhotos] = useState<LocalAttachment[]>([]);
   const [saving, setSaving] = useState(false);
 
   const station = params.stationId ? index?.stations.get(params.stationId) : undefined;
@@ -54,10 +53,7 @@ export default function NewAlertScreen() {
   // Id de la unidad en el servidor (una unidad creada en campo solo lo tiene después de sincronizarse).
   const serverUnitId = unit ? (index?.pkg.units.some((u) => u.id === unit.id) ? unit.id : field.byUnit.get(unit.id)?.unitId ?? null) : null;
 
-  const loadPhotos = useCallback(async () => setPhotos(await field.attachmentsOf(clientId)), [clientId, field.attachmentsOf]);
-  useEffect(() => {
-    void loadPhotos();
-  }, [loadPhotos, field.rev]);
+  const [photos] = useAttachments(clientId);
 
   if (!index) return null;
   if (logistics && !brigade && logBrigades.length > 1) {

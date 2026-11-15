@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, ScrollView, Text, View } from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import * as Crypto from 'expo-crypto';
@@ -8,7 +8,7 @@ import {
   VEHICLE_STATUSES, VEHICLE_STATUS_LABELS,
   type IncidentType, type LogisticsEntity,
 } from '@toce/shared';
-import { useField, type LocalAttachment, type LogisticsInput } from '../../../lib/field';
+import { useAttachments, useField, type LogisticsInput } from '../../../lib/field';
 import { todayLima, usePackageIndex } from '../../../lib/workPackage';
 import { Card, Check, Chip, Choice, Field, Label, Photos, PrimaryButton, Tags, formStyles as fs } from '../../../components/form';
 import { Button } from '../../../components/ui';
@@ -58,15 +58,11 @@ export default function LogisticsRecordScreen() {
     if (entity === 'sample') base.code = `M-${String(field.logistics.filter((r) => r.entity === 'sample').length + 1).padStart(3, '0')}`;
     return base;
   });
-  const [photos, setPhotos] = useState<LocalAttachment[]>([]);
   const [saving, setSaving] = useState(false);
   const set = (k: string) => (v: unknown) => setD((p) => ({ ...p, [k]: v }));
   const str = (k: string) => (d[k] as string | null) ?? '';
 
-  const loadPhotos = useCallback(async () => setPhotos(await field.attachmentsOf(clientId)), [clientId, field.attachmentsOf]);
-  useEffect(() => {
-    void loadPhotos();
-  }, [loadPhotos, field.rev]);
+  const [photos] = useAttachments(clientId);
 
   const stations = useMemo(() => {
     if (!index || !brigadeId || entity !== 'sample') return [];

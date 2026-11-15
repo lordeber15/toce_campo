@@ -64,7 +64,8 @@ export function useBasemap(project: WpProject | undefined) {
   }, [project?.id, key, onProgress, onError]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    void refresh();
+    // refresh consulta el paquete offline (asíncrono): el estado cambia después, no durante el efecto.
+    void refresh(); // eslint-disable-line react-hooks/set-state-in-effect
     return () => {
       if (packRef.current) OfflineManager.removeListener(packRef.current.id);
     };

@@ -43,7 +43,7 @@ export type LocalExecution = {
   syncError: string | null;
 };
 
-export type OwnerType = 'execution' | 'incident' | 'logistics';
+export type OwnerType = 'execution' | 'incident' | 'logistics' | 'inquiry_message';
 
 export type LocalAttachment = {
   clientId: string;
@@ -124,6 +124,8 @@ export type BrigadeIncident = BrigadeIncidentDto & {
 /** Consulta de coordinación dirigida al usuario, con sus respuestas aún por enviar. */
 export type LocalInquiry = MyInquiryDto & {
   outbox: { clientId: string; body: string; sentAt: string; error: string | null }[];
+  /** Fotos tomadas en este teléfono para mis respuestas, por id de la respuesta. */
+  photos: Record<string, { clientId: string; path: string; uploaded: boolean; freed: boolean }[]>;
   /** Hay preguntas de coordinación que el usuario no ha visto. */
   unread: boolean;
 };
@@ -188,7 +190,8 @@ type Ctx = {
   sendIncidentMessage: (incidentClientId: string, body: string) => Promise<void>;
   markIncidentSeen: (incidentClientId: string) => Promise<void>;
   markBrigadeIncidentSeen: (incidentClientId: string) => Promise<void>;
-  sendInquiryReply: (inquiryId: string, body: string) => Promise<void>;
+  /** Guarda la respuesta para enviarla (también sin conexión). Devuelve su id local. */
+  sendInquiryReply: (inquiryId: string, body: string, clientId?: string) => Promise<string>;
   markInquirySeen: (inquiryId: string) => Promise<void>;
   saveLogistics: <E extends LogisticsEntity>(entity: E, input: LogisticsInput<E>) => Promise<void>;
   /** Archivos ya enviados con más de 30 días que se pueden borrar del teléfono. */
@@ -275,7 +278,8 @@ const ATT_COLS = attCols();
 const MY_FILES = `(
   (a.owner_type = 'execution' AND a.execution_client_id IN (SELECT client_id FROM executions WHERE user_id = $u))
   OR (a.owner_type = 'incident' AND a.execution_client_id IN (SELECT client_id FROM incidents WHERE user_id = $u))
-  OR (a.owner_type = 'logistics' AND a.execution_client_id IN (SELECT client_id FROM logistics WHERE user_id = $u)))`;
+  OR (a.owner_type = 'logistics' AND a.execution_client_id IN (SELECT client_id FROM logistics WHERE user_id = $u))
+  OR (a.owner_type = 'inquiry_message' AND a.execution_client_id IN (SELECT client_id FROM inquiry_replies_out WHERE user_id = $u)))`;
 
 /** Cada cuánto se reintenta la subida mientras la app está abierta y desbloqueada. */
 const SYNC_INTERVAL_MS = 60 * 1000;
@@ -289,7 +293,7 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
     logistics: !!roles?.includes('logistico'),
   }), [roles]);
   const scheduleChanged = useRef(onScheduleChanged);
-  scheduleChanged.current = onScheduleChanged;
+  useEffect(() => { scheduleChanged.current = onScheduleChanged; }, [onScheduleChanged]);
   const userId = user?.id ?? null;
   const [executions, setExecutions] = useState<LocalExecution[]>([]);
   const [incidents, setIncidents] = useState<LocalIncident[]>([]);
@@ -354,11 +358,20 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
     const qi = await db.getAllAsync<{ id: string; data: string; seen_at: string | null }>('SELECT id, data, seen_at FROM inquiries_in WHERE user_id = ?', userId);
     const qo = await db.getAllAsync<{ client_id: string; inquiry_id: string; body: string; sent_at: string; sync_error: string | null }>(
       'SELECT client_id, inquiry_id, body, sent_at, sync_error FROM inquiry_replies_out WHERE user_id = ? AND synced <> 1 ORDER BY sent_at', userId);
+    const qp = await db.getAllAsync<{ client_id: string; reply: string; inquiry_id: string; path: string; uploaded: number; freed: number }>(
+      `SELECT a.client_id, a.execution_client_id AS reply, r.inquiry_id, a.path, a.uploaded, a.freed FROM attachments a
+       JOIN inquiry_replies_out r ON r.client_id = a.execution_client_id
+       WHERE a.owner_type = 'inquiry_message' AND r.user_id = ? AND a.replaced = 0 ORDER BY a.taken_at`, userId);
     setInquiries(qi.map((r) => {
       const d = JSON.parse(r.data) as MyInquiryDto;
       const sent = new Set(d.thread.map((m) => m.clientId));
+      const photos: LocalInquiry['photos'] = {};
+      for (const ph of qp.filter((x) => x.inquiry_id === r.id)) {
+        (photos[ph.reply] ??= []).push({ clientId: ph.client_id, path: ph.path, uploaded: !!ph.uploaded, freed: !!ph.freed });
+      }
       return {
         ...d,
+        photos,
         outbox: qo.filter((m) => m.inquiry_id === r.id && !sent.has(m.client_id))
           .map((m) => ({ clientId: m.client_id, body: m.body, sentAt: m.sent_at, error: m.sync_error })),
         unread: inquiryNews(d, r.seen_at, userId),
@@ -378,13 +391,14 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
          (SELECT SUM(CASE WHEN a.uploaded = 0 THEN COALESCE(a.size_bytes, 0) ELSE 0 END
                    + CASE WHEN a.original_path IS NOT NULL AND a.original_uploaded = 0 THEN COALESCE(a.original_size_bytes, 0) ELSE 0 END)
             FROM attachments a WHERE ${files}) AS bytes`,
-      userId, userId, userId, userId, userId, userId, userId, userId, userId, userId);
+      userId, userId, userId, userId, userId, userId, userId, userId, userId, userId, userId, userId);
     setPending({ executions: p?.ex ?? 0, files: p?.files ?? 0, bytes: p?.bytes ?? 0 });
     setRev((v) => v + 1);
   }, [userId]);
 
+  // reload lee SQLite (asíncrono): el estado se actualiza después, no durante el efecto.
   useEffect(() => {
-    void reload();
+    void reload(); // eslint-disable-line react-hooks/set-state-in-effect
   }, [reload]);
 
   const syncNow = useCallback(async () => {
@@ -547,13 +561,14 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
     await reload();
   }, [userId, reload]);
 
-  const sendInquiryReply = useCallback(async (inquiryId: string, body: string) => {
+  const sendInquiryReply = useCallback(async (inquiryId: string, body: string, clientId: string = Crypto.randomUUID()) => {
     if (!userId) throw new Error('Sin sesión');
     const db = await getDb();
     await db.runAsync('INSERT INTO inquiry_replies_out (client_id, user_id, inquiry_id, body, sent_at) VALUES (?, ?, ?, ?, ?)',
-      Crypto.randomUUID(), userId, inquiryId, body.trim(), new Date().toISOString());
+      clientId, userId, inquiryId, body.trim(), new Date().toISOString());
     await reload();
     scheduleSync();
+    return clientId;
   }, [userId, reload, scheduleSync]);
 
   const markInquirySeen = useCallback(async (inquiryId: string) => {
@@ -638,6 +653,26 @@ export function useField() {
   const ctx = useContext(FieldContext);
   if (!ctx) throw new Error('useField fuera de FieldProvider');
   return ctx;
+}
+
+const NO_FILES: LocalAttachment[] = [];
+
+/**
+ * Fotos y audios guardados en el teléfono para un registro (unidad, alerta o logística).
+ * Se recargan solos cuando cambia algo en el teléfono; `refresh` fuerza una recarga.
+ */
+export function useAttachments(ownerClientId: string | null | undefined) {
+  const { attachmentsOf, rev } = useField();
+  const [state, setState] = useState<{ owner: string | null; files: LocalAttachment[] }>({ owner: null, files: NO_FILES });
+  const [nonce, setNonce] = useState(0);
+  useEffect(() => {
+    if (!ownerClientId) return;
+    let alive = true;
+    void attachmentsOf(ownerClientId).then((files) => { if (alive) setState({ owner: ownerClientId, files }); });
+    return () => { alive = false; };
+  }, [ownerClientId, attachmentsOf, rev, nonce]);
+  const refresh = useCallback(() => setNonce((n) => n + 1), []);
+  return [ownerClientId && state.owner === ownerClientId ? state.files : NO_FILES, refresh] as const;
 }
 
 /**
@@ -785,9 +820,10 @@ async function pushAll(
      LEFT JOIN executions e ON a.owner_type = 'execution' AND e.client_id = a.execution_client_id
      LEFT JOIN incidents i ON a.owner_type = 'incident' AND i.client_id = a.execution_client_id
      LEFT JOIN logistics l ON a.owner_type = 'logistics' AND l.client_id = a.execution_client_id
+     LEFT JOIN inquiry_replies_out q ON a.owner_type = 'inquiry_message' AND q.client_id = a.execution_client_id
      WHERE a.meta_synced = 0 AND ((e.user_id = ? AND e.synced_at IS NOT NULL) OR (i.user_id = ? AND i.synced_at IS NOT NULL)
-       OR (l.user_id = ? AND l.synced_at IS NOT NULL))
-     ORDER BY a.taken_at`, userId, userId, userId);
+       OR (l.user_id = ? AND l.synced_at IS NOT NULL) OR (q.user_id = ? AND q.synced = 1))
+     ORDER BY a.taken_at`, userId, userId, userId, userId);
   for (const a of metas) {
     try {
       await api<AttachmentMetaResult>('/field/attachments', {
@@ -796,7 +832,8 @@ async function pushAll(
           clientId: a.clientId,
           ...(a.ownerType === 'incident'
             ? { incidentClientId: a.executionClientId }
-            : a.ownerType === 'logistics' ? { logisticsClientId: a.executionClientId } : { executionClientId: a.executionClientId }),
+            : a.ownerType === 'logistics' ? { logisticsClientId: a.executionClientId }
+              : a.ownerType === 'inquiry_message' ? { inquiryReplyClientId: a.executionClientId } : { executionClientId: a.executionClientId }),
           kind: a.kind, slotKey: a.slotKey, mimeType: a.mimeType,
           sizeBytes: a.sizeBytes, originalSizeBytes: a.originalSizeBytes, width: a.width, height: a.height, durationSec: a.durationSec,
           lat: a.lat, lng: a.lng, accuracy: a.accuracy, altitude: a.altitude, takenAt: a.takenAt,
