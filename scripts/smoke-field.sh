@@ -93,6 +93,21 @@ if [ -n "$OPEN_SM" ]; then
   docker exec toce-postgres psql -U toce -d toce -qc "delete from executions where client_id='$EX2'; delete from sampling_units where client_id='$NU'" >/dev/null
 fi
 
+# Lo programado es el mínimo: fotos adicionales sin límite (no reemplazan) y unidades adicionales en métodos programados.
+X1=$(uuid); X2=$(uuid)
+for X in $X1 $X2; do
+  curl -s -X POST $B/field/attachments -H "$H" -H 'content-type: application/json' \
+    -d "{\"clientId\":\"$X\",\"executionClientId\":\"$EX\",\"kind\":\"foto\",\"slotKey\":\"adicional\",\"mimeType\":\"image/jpeg\",\"takenAt\":\"$NOW\"}" >/dev/null
+done
+check "fotos adicionales: se guardan todas" "$(docker exec toce-postgres psql -U toce -d toce -tAc "select count(*) from attachments where client_id in ('$X1','$X2') and slot_key='adicional'")" 2
+SM_PC=$(echo "$PKG" | js "p.stationMethods.find(s=>s.stationId==='$STATION'&&s.methodId==='$METHOD').id")
+NEXT=$(docker exec toce-postgres psql -U toce -d toce -tAc "select coalesce(max(seq),0)+1 from sampling_units where station_method_id='$SM_PC'")
+EX3=$(uuid); NU3=$(uuid)
+BODY="{\"clientId\":\"$EX3\",\"newUnit\":{\"clientId\":\"$NU3\",\"stationMethodId\":\"$SM_PC\"},\"stationId\":\"$STATION\",\"methodId\":\"$METHOD\",\"status\":\"en_curso\",\"startedAt\":\"$NOW\",\"clientUpdatedAt\":\"$NOW\",\"formData\":{\"records\":[]}}"
+C3=$(curl -s -X POST $B/field/executions -H "$H" -H 'content-type: application/json' -d "$BODY" | js 'p.unitCode')
+check "unidad adicional en método programado (siguiente correlativo)" "$C3" "${CODE%??}$(printf '%02d' "$NEXT")"
+docker exec toce-postgres psql -U toce -d toce -qc "delete from attachments where client_id in ('$X1','$X2'); delete from executions where client_id='$EX3'; delete from sampling_units where client_id='$NU3'" >/dev/null
+
 # Limpieza: archivos en MinIO, filas y estados.
 KEYS=$(docker exec toce-postgres psql -U toce -d toce -tAc "select object_key from attachments where client_id in ('$PH','$AU') union all select original_object_key from attachments where client_id='$PH'")
 ROOT=$(cd "$(dirname "$0")/.." && pwd)

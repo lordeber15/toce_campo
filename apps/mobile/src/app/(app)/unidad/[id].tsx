@@ -29,6 +29,14 @@ export default function UnitScreen() {
   const [files, loadFiles] = useAttachments(execution?.clientId);
 
   const required = useMemo(() => (method ? requiredPhotos(method) : []), [method]);
+  const extras = files.filter((f) => f.kind === 'foto' && f.slotKey === 'adicional');
+  const removeExtra = (f: LocalAttachment) => {
+    if (f.metaSynced) return Alert.alert('Foto ya enviada', 'Esta foto ya está en el servidor y queda como evidencia.');
+    Alert.alert('Quitar foto adicional', '¿Quitar esta foto? Aún no se ha enviado.', [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Quitar', style: 'destructive', onPress: () => void field.removeAttachment(f.clientId) },
+    ]);
+  };
   const missing = required.filter((r) => !files.some((f) => f.kind === r.kind && (r.kind === 'foto_metodo' || f.slotKey === r.key)));
 
   // Con todas las fotos obligatorias, la unidad pasa a "fotos listas" (falta el formulario o el cierre).
@@ -153,8 +161,7 @@ export default function UnitScreen() {
 
       {execution && (
         <>
-          {(method.photoSlots.length > 0 || method.methodPhotoInstructions || method.methodPhotoRequired) && (
-            <View style={s.card}>
+          <View style={s.card}>
               <Text style={s.h2}>Registro fotográfico</Text>
               {method.photoSlots.length > 0 && (
                 <>
@@ -174,6 +181,7 @@ export default function UnitScreen() {
                   </View>
                 </>
               )}
+              {(method.photoSlots.length > 0 || method.methodPhotoInstructions || method.methodPhotoRequired) && (
               <View style={s.methodPhoto}>
                 <Text style={s.h3}>Foto del método{method.methodPhotoRequired ? ' *' : ''}</Text>
                 <Text style={s.small}>
@@ -190,8 +198,36 @@ export default function UnitScreen() {
                   />
                 </View>
               </View>
+              )}
+              {/* Lo configurado es el mínimo: el especialista suma las evidencias que necesite. */}
+              <View style={s.methodPhoto}>
+                <Text style={s.h3}>Fotos adicionales{extras.length ? ` (${extras.length})` : ''}</Text>
+                <Text style={s.small}>Las que necesites como evidencia, sin límite. Mantén presionada una foto aún no enviada para quitarla.</Text>
+                <View style={s.grid}>
+                  {extras.map((f, i) => (
+                    <PhotoTile
+                      key={f.clientId}
+                      label={`Adicional ${i + 1}`}
+                      required={false}
+                      photo={f}
+                      disabled={closed}
+                      last={i % 2 === 1}
+                      extra
+                      onPress={() => removeExtra(f)}
+                    />
+                  ))}
+                  {!closed && (
+                    <PhotoTile
+                      label="Agregar foto"
+                      required={false}
+                      disabled={false}
+                      last={extras.length % 2 === 1}
+                      onPress={() => takePhoto('foto', 'adicional', `Foto adicional ${extras.length + 1}`)}
+                    />
+                  )}
+                </View>
+              </View>
             </View>
-          )}
 
           <View style={s.card}>
             <View style={s.headRow}>
@@ -322,16 +358,18 @@ function InfoRow({ label, value, warn }: { label: string; value: string; warn?: 
   );
 }
 
-function PhotoTile({ label, required, photo, disabled, last, onPress }: {
-  label: string; required: boolean; photo?: LocalAttachment; disabled: boolean; last: boolean; onPress: () => void;
+/** `extra`: foto adicional (tocar no repite; mantener presionado la quita). */
+function PhotoTile({ label, required, photo, disabled, last, onPress, extra = false }: {
+  label: string; required: boolean; photo?: LocalAttachment; disabled: boolean; last: boolean; onPress: () => void; extra?: boolean;
 }) {
   return (
     <Pressable
-      onPress={onPress}
+      onPress={extra ? undefined : onPress}
+      onLongPress={extra ? onPress : undefined}
       disabled={disabled}
       style={({ pressed }) => [s.tile, { marginRight: last ? 0 : '4%' }, pressed && s.pressed]}
       accessibilityRole="button"
-      accessibilityLabel={photo ? `${label}: tomada. Tocar para repetir` : `Tomar foto ${label}`}
+      accessibilityLabel={extra ? `${label}. Mantener presionado para quitar` : photo ? `${label}: tomada. Tocar para repetir` : `Tomar foto ${label}`}
     >
       {photo?.freed ? (
         <View style={[s.thumb, s.empty]}><Text style={s.small}>En el servidor</Text></View>
@@ -343,7 +381,7 @@ function PhotoTile({ label, required, photo, disabled, last, onPress }: {
         </View>
       )}
       <Text style={s.tileLabel}>
-        {label}{required ? ' *' : ''}{photo && !disabled ? ' · repetir' : ''}
+        {label}{required ? ' *' : ''}{photo && !disabled && !extra ? ' · repetir' : ''}
       </Text>
     </Pressable>
   );

@@ -97,7 +97,8 @@ export default function CameraScreen() {
           durationSec: null, lat: p?.lat ?? null, lng: p?.lng ?? null, accuracy: p?.accuracy ?? null, altitude: p?.altitude ?? null,
           takenAt: takenAt.toISOString(),
         },
-        true,
+        // Las fotos de un lado (norte, sur…) reemplazan a la anterior; las adicionales se suman.
+        slot !== 'adicional',
       );
       router.back();
     } catch (e) {

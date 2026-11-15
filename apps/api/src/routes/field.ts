@@ -34,19 +34,21 @@ async function canWorkStation(userId: string, roles: string[], stationId: string
   return r.rows.length > 0;
 }
 
-/** Crea (una sola vez, por clientId) una unidad de un método abierto con el siguiente correlativo. */
+/**
+ * Crea (una sola vez, por clientId) una unidad hecha en campo con el siguiente correlativo:
+ * registros de un método abierto o unidades adicionales a las programadas (en cualquier método).
+ */
 async function ensureOpenUnit(tx: Tx, userId: string, stationId: string, methodId: string, u: { clientId: string; stationMethodId: string }) {
   const existing = (await tx.execute(sql`SELECT id, code FROM sampling_units WHERE client_id = ${u.clientId}`)).rows[0] as
     | { id: string; code: string }
     | undefined;
   if (existing) return existing;
   const sm = (await tx.execute(sql`
-    SELECT sm.id, s.code AS "stationCode", m.code AS "methodCode", m.is_open_ended AS "isOpenEnded"
+    SELECT sm.id, s.code AS "stationCode", m.code AS "methodCode"
     FROM station_methods sm JOIN stations s ON s.id = sm.station_id JOIN methods m ON m.id = sm.method_id
     WHERE sm.id = ${u.stationMethodId} AND sm.station_id = ${stationId} AND sm.method_id = ${methodId}
-    FOR UPDATE OF sm`)).rows[0] as { id: string; stationCode: string; methodCode: string; isOpenEnded: boolean } | undefined;
+    FOR UPDATE OF sm`)).rows[0] as { id: string; stationCode: string; methodCode: string } | undefined;
   if (!sm) throw badRequest('El método no está habilitado en la estación');
-  if (!sm.isOpenEnded) throw badRequest('Solo los métodos de registro abierto crean unidades en campo');
   const next = (await tx.execute(sql`
     SELECT COALESCE(MAX(seq), 0) + 1 AS seq FROM sampling_units WHERE station_method_id = ${sm.id}`)).rows[0] as { seq: number };
   const seq = Number(next.seq);

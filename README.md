@@ -70,6 +70,11 @@ Flujo: estación → unidad → **Iniciar unidad** (hora y GPS) → fotos por or
 - API: `POST /api/field/executions` (idempotente por `clientId`; gana el envío más reciente según la hora del teléfono), `POST /api/field/attachments`, `PUT /api/field/attachments/:clientId/content?variant=compressed|original` (cuerpo binario, va directo a MinIO), `GET /api/field/attachments/:id/url` (enlace temporal).
 - Ruta en MinIO: `<proyecto>/<estación>/<unidad>/fotos|audios|originales/<clientId>.<ext>`.
 
+## Lo configurado es el mínimo (móvil)
+
+- **Fotos adicionales**: en cada unidad, además de las fotos configuradas (obligatorias para cerrarla), "Fotos adicionales" permite sumar las evidencias que el especialista necesite, sin límite. Cada una lleva el sello UTM. Una foto aún no enviada se quita manteniéndola presionada. En la web y en el ZIP aparecen como "Foto adicional N".
+- **Unidades adicionales**: en cualquier método, "+ Agregar unidad (PC-11)" crea la siguiente unidad sin pedir motivo ni aprobación, también sin conexión. En la estación aparece como "adicional". El avance se mide contra lo programado: lo extra no supera el 100 %.
+
 ## Mapa offline (móvil)
 
 - **Mapa base OpenStreetMap servido por nuestro API** (`/api/basemap/style.json`, teselas, fuentes e íconos). Los servidores de openstreetmap.org prohíben descargar zonas para uso offline, así que el API lee las teselas vectoriales de la compilación pública diaria de [Protomaps](https://protomaps.com) (datos OSM, hecha para extraer regiones) y las guarda en MinIO (`basemap/`): cada tesela se pide a internet una sola vez. Fuera de la zona de los proyectos (+15 km) solo se sirven los zooms generales. Se puede fijar un archivo propio con `BASEMAP_PMTILES_URL`.

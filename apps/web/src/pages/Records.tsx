@@ -210,8 +210,11 @@ export function RecordDetailPage({ mine = false }: { mine?: boolean }) {
   const fields = d.formSchema.fields ?? [];
   const photos = d.attachments.filter((a) => a.kind === 'foto' || a.kind === 'foto_metodo');
   const audios = d.attachments.filter((a) => a.kind === 'audio');
+  const extras = photos.filter((a) => a.slotKey === 'adicional');
   const slotLabel = (a: RecordAttachment) =>
-    a.kind === 'foto_metodo' ? 'Foto del método' : d.photoSlots.find((s) => s.key === a.slotKey)?.label ?? a.slotKey ?? 'Foto';
+    a.kind === 'foto_metodo' ? 'Foto del método'
+      : a.slotKey === 'adicional' ? `Foto adicional ${extras.indexOf(a) + 1}`
+        : d.photoSlots.find((s) => s.key === a.slotKey)?.label ?? a.slotKey ?? 'Foto';
   const dur = minutes(d.startedAt, d.finishedAt);
   const offDate = !!d.plannedDate && limaDate(d.startedAt) !== d.plannedDate;
 

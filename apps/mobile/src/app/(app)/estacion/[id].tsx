@@ -36,11 +36,16 @@ export default function StationScreen() {
 
   const openUnit = (unitId: string) => router.push({ pathname: '/unidad/[id]', params: { id: unitId, ...(date ? { date } : {}) } });
 
-  /** Métodos abiertos (registros oportunos): cada observación crea su unidad con el siguiente correlativo. */
+  const nextSeq = (m: MethodProgress) => Math.max(0, ...m.units.map((u) => u.seq)) + 1;
+
+  /**
+   * Crea una unidad en campo con el siguiente correlativo: en métodos abiertos, cada observación;
+   * en los demás, unidades adicionales a las programadas (lo programado es el mínimo). Funciona sin conexión.
+   */
   const newOpenUnit = async (m: MethodProgress) => {
     try {
       const p = pos.status === 'ok' ? pos.position : null;
-      const seq = Math.max(0, ...m.units.map((u) => u.seq)) + 1;
+      const seq = nextSeq(m);
       const schedule = visits.find((v) => v.plannedDate === (date ?? todayLima())) ?? visit;
       const newUnitClientId = Crypto.randomUUID();
       await field.start({
@@ -52,6 +57,16 @@ export default function StationScreen() {
     } catch (e) {
       Alert.alert('No se pudo crear el registro', e instanceof Error ? e.message : '');
     }
+  };
+
+  // En métodos con unidades programadas se confirma, para no crear una por un toque accidental.
+  const addUnit = (m: MethodProgress) => {
+    if (m.method.isOpenEnded) return void newOpenUnit(m);
+    const code = `${m.method.code}-${String(nextSeq(m)).padStart(2, '0')}`;
+    Alert.alert('Agregar unidad', `Se agrega ${code} a las ${m.stationMethod.unitsRequired} programadas.`, [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Agregar', onPress: () => void newOpenUnit(m) },
+    ]);
   };
 
   return (
@@ -161,15 +176,19 @@ export default function StationScreen() {
                     style={({ pressed }) => [s.unit, { backgroundColor: st.bg, marginRight: i % 3 === 2 ? 0 : '2%' }, pressed && { opacity: 0.7 }]}
                   >
                     <Text style={[s.unitCode, { color: st.fg }]}>{`${m.method.code}-${String(u.seq).padStart(2, '0')}`}</Text>
-                    <Text style={[s.unitStatus, { color: st.fg }]} numberOfLines={1}>{st.label}</Text>
+                    <Text style={[s.unitStatus, { color: st.fg }]} numberOfLines={1}>
+                      {st.label}{!m.method.isOpenEnded && u.seq > m.stationMethod.unitsRequired ? ' · adicional' : ''}
+                    </Text>
                   </Pressable>
                 );
               })}
             </View>
           )}
-          {m.method.isOpenEnded && roleView.executes && (
-            <Pressable onPress={() => void newOpenUnit(m)} style={({ pressed }) => [s.newBtn, pressed && { opacity: 0.7 }]} accessibilityRole="button">
-              <Text style={s.newBtnText}>+ Nuevo registro ({m.method.code})</Text>
+          {roleView.executes && (
+            <Pressable onPress={() => addUnit(m)} style={({ pressed }) => [s.newBtn, pressed && { opacity: 0.7 }]} accessibilityRole="button">
+              <Text style={s.newBtnText}>
+                {m.method.isOpenEnded ? `+ Nuevo registro (${m.method.code})` : `+ Agregar unidad (${m.method.code}-${String(nextSeq(m)).padStart(2, '0')})`}
+              </Text>
             </Pressable>
           )}
         </View>
