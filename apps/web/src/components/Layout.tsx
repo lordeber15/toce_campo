@@ -64,17 +64,16 @@ function saveFolded(v: string[]) {
   try { localStorage.setItem(FOLDED_KEY, JSON.stringify(v)); } catch { /* sin almacenamiento: solo dura la sesión */ }
 }
 
-/** Grupo del menú que se pliega; el que contiene la página actual siempre queda abierto. */
-function NavSection({ id, title, active, count, folded, onToggle, children }: {
-  id: string; title: string; active: boolean; count: number; folded: boolean; onToggle: () => void; children: React.ReactNode;
+/** Grupo del menú que se pliega o despliega con su título. */
+function NavSection({ id, title, folded, onToggle, children }: {
+  id: string; title: string; folded: boolean; onToggle: () => void; children: React.ReactNode;
 }) {
-  const open = active || !folded;
+  const open = !folded;
   return (
     <div className={'nav-group' + (open ? '' : ' collapsed')}>
-      <button type="button" className="nav-title nav-toggle" onClick={onToggle} aria-expanded={open} aria-controls={`nav-${id}`} disabled={active}
-        title={active ? 'Contiene la página actual' : open ? 'Plegar' : 'Desplegar'}>
+      <button type="button" className="nav-title nav-toggle" onClick={onToggle} aria-expanded={open} aria-controls={`nav-${id}`}
+        title={open ? 'Plegar' : 'Desplegar'}>
         <span>{title}</span>
-        {!open && <span className="nav-count">{count}</span>}
         <svg className="nav-chevron" width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" /></svg>
       </button>
       <div id={`nav-${id}`} className="nav-items">{children}</div>
@@ -96,6 +95,19 @@ export function Layout() {
     return next;
   });
   const isActive = (to: string) => (to === '/' ? pathname === '/' : pathname === to || pathname.startsWith(`${to}/`));
+  // Al entrar a una página de un grupo plegado, ese grupo se abre (después se puede volver a plegar).
+  const [seenPath, setSeenPath] = useState(pathname);
+  if (seenPath !== pathname) {
+    setSeenPath(pathname);
+    const group = pathname.startsWith('/mis-registros') || pathname.startsWith('/mi-brigada/')
+      ? 'mi-trabajo'
+      : NAV.find((g) => g.title && g.items.some((i) => isActive(i.to)))?.title?.toLowerCase();
+    if (group && folded.includes(group)) {
+      const next = folded.filter((x) => x !== group);
+      setFolded(next);
+      saveFolded(next);
+    }
+  }
   const link = (i: Item) => i.soon ? (
     <span key={i.to} className="nav-link" aria-disabled="true" title="Disponible en la Fase 2">
       {i.label}<span className="nav-soon">Fase 2</span>
@@ -114,10 +126,7 @@ export function Layout() {
             </select>
           </div>
         )}
-        <NavSection
-          id="mi-trabajo" title="Mi trabajo" count={1 + led.length} folded={folded.includes('mi-trabajo')} onToggle={() => toggle('mi-trabajo')}
-          active={isActive('/mis-registros') || pathname.startsWith('/mi-brigada/')}
-        >
+        <NavSection id="mi-trabajo" title="Mi trabajo" folded={folded.includes('mi-trabajo')} onToggle={() => toggle('mi-trabajo')}>
           <NavLink to="/mis-registros" className={({ isActive: a }) => 'nav-link' + (a ? ' active' : '')}>Mis registros</NavLink>
           {led.map((b) => (
             <NavLink key={b.id} to={`/mi-brigada/${b.id}`} className={({ isActive: a }) => 'nav-link' + (a ? ' active' : '')}>Mi brigada · {b.name}</NavLink>
@@ -129,8 +138,7 @@ export function Layout() {
           if (!group.title) return <div key={gi} className="nav-group">{items.map(link)}</div>;
           const id = group.title.toLowerCase();
           return (
-            <NavSection key={gi} id={id} title={group.title} count={items.length} folded={folded.includes(id)} onToggle={() => toggle(id)}
-              active={items.some((i) => isActive(i.to))}>
+            <NavSection key={gi} id={id} title={group.title} folded={folded.includes(id)} onToggle={() => toggle(id)}>
               {items.map(link)}
             </NavSection>
           );
