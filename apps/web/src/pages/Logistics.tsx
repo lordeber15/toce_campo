@@ -6,6 +6,7 @@ import {
   type EquipmentData, type ExpenseData, type LogisticsData, type LogisticsEntity, type SampleData, type SupportData, type VehicleData,
 } from '@toce/shared';
 import { api } from '../lib/api';
+import { MediaViewer } from '../components/MediaViewer';
 import { useProject } from '../lib/project';
 import { ErrorBox, NoProject } from '../components/Dialog';
 
@@ -216,6 +217,7 @@ function Files({ files }: { files: FileRef[] }) {
 }
 
 function Thumb({ file }: { file: FileRef }) {
+  const [open, setOpen] = useState(false);
   const url = useQuery({
     queryKey: ['file-url', file.id],
     enabled: file.uploaded,
@@ -224,9 +226,21 @@ function Thumb({ file }: { file: FileRef }) {
   });
   if (!file.uploaded) return <span className="chip" title="La foto se sube cuando el teléfono tenga conexión">En el teléfono</span>;
   if (!url.data) return <span style={{ display: 'inline-block', width: 40, height: 40, borderRadius: 6, background: 'var(--surface-2)' }} />;
+  const label = file.kind === 'comprobante' ? 'Comprobante' : 'Foto';
   return (
-    <a href={url.data.url} target="_blank" rel="noreferrer" title={file.kind === 'comprobante' ? 'Ver comprobante' : 'Ver foto'}>
-      <img src={url.data.url} alt={file.kind === 'comprobante' ? 'Comprobante' : 'Foto'} style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)', display: 'block' }} />
-    </a>
+    <>
+      <button type="button" onClick={() => setOpen(true)} title={`Ver ${label.toLowerCase()}`} style={{ padding: 0, border: 0, background: 'none', cursor: 'zoom-in' }}>
+        <img src={url.data.url} alt={label} style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)', display: 'block' }} />
+      </button>
+      {open && (
+        <MediaViewer
+          title={label}
+          kind={file.kind}
+          queryKey={['logistics-file', file.id]}
+          load={() => api<{ url: string }>(`/field/attachments/${file.id}/url`).then((r) => r.url)}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
   );
 }

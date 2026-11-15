@@ -280,7 +280,7 @@ const fieldRoutes: FastifyPluginAsync = async (app) => {
       if (a.by !== req.user.sub && !(await canWorkStation(req.user.sub, req.user.roles, a.stationId))) throw new HttpError(403, 'Sin acceso');
       const original = req.query.variant === 'original' && a.originalKey;
       if ((original ? a.oup : a.up) !== 'subido') throw conflict('El archivo aún no se ha subido');
-      const url = await app.minio.presignedGetObject(app.minioBucket, original ? a.originalKey! : a.objectKey, 15 * 60);
+      const url = await app.minioSign.presignedGetObject(app.minioBucket, original ? a.originalKey! : a.objectKey, 15 * 60);
       return { url };
     },
   );

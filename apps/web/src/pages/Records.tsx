@@ -7,6 +7,7 @@ import {
   type RecordFilterOptions, type RecordsPage, WEB_ROLES,
 } from '@toce/shared';
 import { api, download } from '../lib/api';
+import { MediaViewer } from '../components/MediaViewer';
 import { useAuth } from '../lib/auth';
 import { useProject } from '../lib/project';
 import { ErrorBox, NoProject } from '../components/Dialog';
@@ -368,29 +369,34 @@ function useFileUrl(file: RecordAttachment, variant: 'compressed' | 'original' =
 
 function Photo({ file, label }: { file: RecordAttachment; label: string }) {
   const url = useFileUrl(file);
-  const [wantOriginal, setWantOriginal] = useState(false);
-  const original = useFileUrl(file, 'original', wantOriginal && file.hasOriginal);
-  useEffect(() => { if (original.data) window.open(original.data.url, '_blank', 'noopener'); }, [original.data]);
+  const [open, setOpen] = useState(false);
   const box = { width: 220, height: 165, borderRadius: 8, border: '1px solid var(--border)' };
+  const fetchUrl = (variant: 'compressed' | 'original') => api<{ url: string }>(`/field/attachments/${file.id}/url?variant=${variant}`).then((r) => r.url);
   return (
     <figure style={{ margin: 0, width: 220 }}>
       {file.uploadStatus !== 'subido' ? (
         <div className="card empty" style={{ ...box, padding: 16, fontSize: 13, display: 'grid', placeItems: 'center' }}>Aún en el teléfono (se sube con conexión)</div>
       ) : url.data ? (
-        <a href={url.data.url} target="_blank" rel="noreferrer" title="Ver en tamaño completo">
-          <img src={url.data.url} alt={`${label}, ${when(file.takenAt)}`} style={{ ...box, objectFit: 'cover' }} loading="lazy" />
-        </a>
+        <button type="button" onClick={() => setOpen(true)} title="Ver en tamaño completo" style={{ padding: 0, border: 0, background: 'none', cursor: 'zoom-in', display: 'block' }}>
+          <img src={url.data.url} alt={`${label}, ${when(file.takenAt)}`} style={{ ...box, objectFit: 'cover', display: 'block' }} loading="lazy" />
+        </button>
       ) : <div className="card" style={box} />}
       <figcaption style={{ fontSize: 13, marginTop: 4 }}>
         <strong>{label}</strong> <span className="hint">{hour(file.takenAt)}</span>
         {file.lat != null && file.lng != null && <div className="hint">{utm(file.lat, file.lng)}{file.accuracy != null ? ` ±${Math.round(file.accuracy)} m` : ''}</div>}
         {file.caption && <div>{file.caption}</div>}
-        {file.hasOriginal && (
-          <button className="link-btn" style={{ fontSize: 12, padding: 0 }} onClick={() => (original.data ? window.open(original.data.url, '_blank', 'noopener') : setWantOriginal(true))}>
-            Original en alta resolución
-          </button>
-        )}
       </figcaption>
+      {open && (
+        <MediaViewer
+          title={label}
+          kind="foto"
+          queryKey={['record-file', file.id]}
+          load={() => fetchUrl('compressed')}
+          loadOriginal={file.hasOriginal ? () => fetchUrl('original') : undefined}
+          caption={<>{when(file.takenAt)}{file.lat != null && file.lng != null ? ` · ${utm(file.lat, file.lng)}` : ''}{file.caption ? ` · ${file.caption}` : ''}</>}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </figure>
   );
 }

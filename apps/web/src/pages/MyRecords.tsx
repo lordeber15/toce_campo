@@ -8,6 +8,7 @@ import {
   type MyIncident, type MyInquiryDto, type MyJournal, type MyLogisticsRow, type MyOverview,
 } from '@toce/shared';
 import { api, download } from '../lib/api';
+import { MediaViewer } from '../components/MediaViewer';
 import { useAuth } from '../lib/auth';
 import { useProject } from '../lib/project';
 import { ErrorBox, NoProject } from '../components/Dialog';
@@ -209,24 +210,22 @@ export function MyRecordsPage() {
   );
 }
 
-/** Abre un archivo propio (o de la brigada) en otra pestaña. */
-function FileChip({ file, label, path }: { file: { id: string; uploaded: boolean }; label: string; path?: string }) {
-  const [error, setError] = useState<unknown>(null);
+/** Abre un archivo propio (o de la brigada) en un visor. */
+function FileChip({ file, label, path }: { file: { id: string; kind?: string; uploaded: boolean }; label: string; path?: string }) {
+  const [open, setOpen] = useState(false);
   if (!file.uploaded) return <span className="chip chip-warn">{label} · en el teléfono</span>;
-  const open = async () => {
-    const w = window.open('', '_blank'); // antes del await para que el navegador no la bloquee
-    try {
-      const { url } = await api<{ url: string }>(path ?? `/me/files/${file.id}/url`);
-      if (w) w.location.href = url; else window.location.assign(url);
-    } catch (e) {
-      w?.close();
-      setError(e);
-    }
-  };
   return (
     <>
-      <button type="button" className="chip" style={{ cursor: 'pointer', border: 0 }} onClick={() => void open()}>{label}</button>
-      <ErrorBox error={error} />
+      <button type="button" className="chip" style={{ cursor: 'pointer', border: 0 }} onClick={() => setOpen(true)}>{label}</button>
+      {open && (
+        <MediaViewer
+          title={label}
+          kind={file.kind}
+          queryKey={['my-file', file.id, path ?? '']}
+          load={() => api<{ url: string }>(path ?? `/me/files/${file.id}/url`).then((r) => r.url)}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </>
   );
 }

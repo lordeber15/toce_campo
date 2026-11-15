@@ -154,7 +154,7 @@ const documentsRoutes: FastifyPluginAsync = async (app) => {
         label: label(x),
         sizeBytes: sizeBytes == null ? null : Number(sizeBytes),
         canDelete: x.origin === 'document',
-        thumbUrl: x.type === 'foto' && x.uploaded ? await app.minio.presignedGetObject(app.minioBucket, key, 30 * 60) : null,
+        thumbUrl: x.type === 'foto' && x.uploaded ? await app.minioSign.presignedGetObject(app.minioBucket, key, 30 * 60) : null,
       });
     }
     return {
@@ -183,7 +183,7 @@ const documentsRoutes: FastifyPluginAsync = async (app) => {
       const ext = EXT[a.mime] ?? 'bin';
       const base = a.caption ?? [a.unit, label(a)].filter(Boolean).join(' ');
       const name = base.toLowerCase().endsWith(`.${ext}`) ? base : `${base}.${ext}`;
-      const url = await app.minio.presignedGetObject(app.minioBucket, original ? a.originalKey! : a.key, 15 * 60, {
+      const url = await app.minioSign.presignedGetObject(app.minioBucket, original ? a.originalKey! : a.key, 15 * 60, {
         'response-content-disposition': `${req.query.download ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(name)}`,
       });
       return { url };

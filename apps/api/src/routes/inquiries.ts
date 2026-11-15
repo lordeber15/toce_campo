@@ -150,7 +150,7 @@ const inquiryRoutes: FastifyPluginAsync = async (app) => {
     if (a.target !== req.user.sub && !hasAnyRole(req.user.roles, [...WEB_ROLES, 'jefe_proyecto'])) throw new HttpError(403, 'Sin acceso');
     if (a.up !== 'subido') throw conflict('El archivo aún no se ha subido');
     const name = a.name ?? 'archivo';
-    const url = await app.minio.presignedGetObject(app.minioBucket, a.key, 15 * 60, {
+    const url = await app.minioSign.presignedGetObject(app.minioBucket, a.key, 15 * 60, {
       'response-content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(name)}`,
     });
     return { url };

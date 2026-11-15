@@ -8,6 +8,7 @@ import {
   type IncidentDecision, type IncidentMessageKind, type IncidentMoment, type IncidentOrigin, type IncidentStatus, type IncidentType,
 } from '@toce/shared';
 import { api } from '../lib/api';
+import { MediaViewer } from '../components/MediaViewer';
 import { useAuth } from '../lib/auth';
 import { useProject } from '../lib/project';
 import { ErrorBox, NoProject } from '../components/Dialog';
@@ -252,6 +253,8 @@ function AlertDetail({ id }: { id: string }) {
 }
 
 function Evidence({ file }: { file: FileRow }) {
+  const [open, setOpen] = useState(false);
+  const load = () => api<{ url: string }>(`/field/attachments/${file.id}/url`).then((r) => r.url);
   const url = useQuery({
     queryKey: ['file-url', file.id],
     enabled: file.uploadStatus === 'subido',
@@ -262,9 +265,12 @@ function Evidence({ file }: { file: FileRow }) {
   if (!url.data) return <div className="card" style={{ width: 160, height: 120 }} />;
   if (file.mimeType.startsWith('audio/')) return <audio controls src={url.data.url} style={{ width: 260 }} />;
   return (
-    <a href={url.data.url} target="_blank" rel="noreferrer" title="Ver en tamaño completo">
-      <img src={url.data.url} alt={`Evidencia ${when(file.takenAt)}`} style={{ width: 200, height: 150, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)' }} />
-    </a>
+    <>
+      <button type="button" onClick={() => setOpen(true)} title="Ver en tamaño completo" style={{ padding: 0, border: 0, background: 'none', cursor: 'zoom-in' }}>
+        <img src={url.data.url} alt={`Evidencia ${when(file.takenAt)}`} style={{ width: 200, height: 150, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--border)', display: 'block' }} />
+      </button>
+      {open && <MediaViewer title={`Evidencia · ${when(file.takenAt)}`} kind="foto" mimeType={file.mimeType} queryKey={['incident-file', file.id]} load={load} onClose={() => setOpen(false)} />}
+    </>
   );
 }
 

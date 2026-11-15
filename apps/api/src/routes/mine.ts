@@ -175,7 +175,7 @@ const mineRoutes: FastifyPluginAsync = async (app) => {
     if (!allowed) throw new HttpError(403, 'Este archivo es de otra persona');
     const original = req.query.original === '1' && a.originalKey && a.oup === 'subido';
     if (!original && a.up !== 'subido') throw new HttpError(409, 'El archivo aún no se ha subido desde el teléfono');
-    return { url: await app.minio.presignedGetObject(app.minioBucket, original ? a.originalKey! : a.key, 15 * 60) };
+    return { url: await app.minioSign.presignedGetObject(app.minioBucket, original ? a.originalKey! : a.key, 15 * 60) };
   });
 
   r.get('/me/evidence/count', { onRequest: app.authenticate, schema: { querystring: myQuerySchema } }, async (req) =>

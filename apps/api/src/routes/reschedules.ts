@@ -201,7 +201,7 @@ const rescheduleRoutes: FastifyPluginAsync = async (app) => {
       | undefined;
     if (!a) throw notFound('Archivo');
     if (a.up !== 'subido') throw conflict('El archivo aún no se ha subido');
-    const url = await app.minio.presignedGetObject(app.minioBucket, a.key, 15 * 60, {
+    const url = await app.minioSign.presignedGetObject(app.minioBucket, a.key, 15 * 60, {
       'response-content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(a.name ?? 'archivo')}`,
     });
     return { url };

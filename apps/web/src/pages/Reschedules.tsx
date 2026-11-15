@@ -8,6 +8,7 @@ import {
   type RescheduleOptions, type RescheduleRow, type RescheduleStatus,
 } from '@toce/shared';
 import { api } from '../lib/api';
+import { MediaViewer } from '../components/MediaViewer';
 import { useAuth } from '../lib/auth';
 import { useProject } from '../lib/project';
 import { Dialog, ErrorBox, NoProject } from '../components/Dialog';
@@ -289,25 +290,24 @@ function FilePicker({ files, onChange, label = 'Adjuntar evidencias' }: { files:
 }
 
 function FileLink({ file }: { file: RescheduleFile }) {
-  const [error, setError] = useState<unknown>(null);
-  const open = async () => {
-    // La pestaña se abre antes de pedir el enlace para que el navegador no la bloquee.
-    const w = window.open('', '_blank');
-    try {
-      const { url } = await api<{ url: string }>(`/reschedule-files/${file.id}/url`);
-      if (w) w.location.href = url; else window.location.assign(url);
-    } catch (e) {
-      w?.close();
-      setError(e);
-    }
-  };
+  const [open, setOpen] = useState(false);
   const icon = file.kind === 'foto' ? '🖼' : file.kind === 'audio' ? '🎧' : '📄';
+  const name = file.name ?? 'archivo';
   return (
     <>
-      <button type="button" className="chip" onClick={() => void open()} title="Abrir" style={{ cursor: 'pointer', border: 0 }}>
-        {icon} {file.name ?? 'archivo'}{file.sizeBytes ? ` (${mb(file.sizeBytes)})` : ''}
+      <button type="button" className="chip" onClick={() => setOpen(true)} title="Ver" style={{ cursor: 'pointer', border: 0 }}>
+        {icon} {name}{file.sizeBytes ? ` (${mb(file.sizeBytes)})` : ''}
       </button>
-      <ErrorBox error={error} />
+      {open && (
+        <MediaViewer
+          title={name}
+          kind={file.kind}
+          mimeType={file.mimeType}
+          queryKey={['/reschedule-files/', file.id]}
+          load={() => api<{ url: string }>(`/reschedule-files/${file.id}/url`).then((r) => r.url)}
+          onClose={() => setOpen(false)}
+        />
+      )}
     </>
   );
 }
