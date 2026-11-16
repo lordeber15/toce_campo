@@ -2,11 +2,12 @@ import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from '@fastify/type-provider-zod';
 import { sql, type SQL } from 'drizzle-orm';
 import {
-  RECORD_PAGE_SIZE, WEB_ROLES, recordsQuerySchema,
-  type RecordDetail, type RecordFilterOptions, type RecordRow, type RecordsPage, type RecordsQuery,
+  RECORD_PAGE_SIZE, WEB_ROLES, photoMapQuerySchema, recordsQuerySchema,
+  type PhotoMapPoint, type RecordDetail, type RecordFilterOptions, type RecordRow, type RecordsPage, type RecordsQuery,
 } from '@toce/shared';
 import { db } from '../db/index.js';
 import { idParam, notFound, projectParam } from '../lib/http.js';
+import { ATTACHMENT_BRIGADE } from '../lib/geo.js';
 
 /** Marca de tiempo en ISO UTC (el formato por defecto de Postgres no lo lee Safari). */
 export const iso = (col: SQL) => sql`to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
@@ -64,7 +65,9 @@ export async function recordDetail(id: string): Promise<RecordDetail> {
         'influenceArea', s.influence_area, 'utmZone', p.utm_zone) AS station,
       CASE WHEN e.start_geom IS NULL THEN NULL ELSE round(ST_Distance(e.start_geom::geography, s.geom::geography))::int END AS "distanceToStationM",
       u.dni AS "specialistDni", m.form_schema AS "formSchema", m.photo_slots AS "photoSlots",
-      COALESCE(e.form_data->'records', '[]'::jsonb) AS "formRecords"
+      COALESCE(e.form_data->'records', '[]'::jsonb) AS "formRecords",
+      CASE WHEN b.area_geom IS NULL THEN NULL ELSE json_build_object('name', b.area_name,
+        'geometry', ST_AsGeoJSON(ST_SimplifyPreserveTopology(b.area_geom, 0.00002), 6)::json) END AS "brigadeArea"
     ${RECORDS_FROM}
     JOIN projects p ON p.id = s.project_id
     LEFT JOIN schedules sc ON sc.id = e.schedule_id
@@ -74,7 +77,7 @@ export async function recordDetail(id: string): Promise<RecordDetail> {
     db.execute(sql`
       SELECT a.id, a.kind, a.slot_key AS "slotKey", a.mime_type AS "mimeType", ${iso(sql`a.taken_at`)} AS "takenAt", a.upload_status AS "uploadStatus",
         (a.original_object_key IS NOT NULL AND a.original_upload_status = 'subido') AS "hasOriginal", a.duration_sec AS "durationSec",
-        ST_Y(a.geom) AS lat, ST_X(a.geom) AS lng, a.accuracy, a.caption
+        ST_Y(a.geom) AS lat, ST_X(a.geom) AS lng, a.accuracy, a.caption, a.outside_area AS "outsideArea"
       FROM attachments a WHERE a.owner_type = 'execution' AND a.owner_id = ${id}
       ORDER BY CASE a.kind WHEN 'foto' THEN 0 WHEN 'foto_metodo' THEN 1 WHEN 'audio' THEN 2 ELSE 3 END, a.taken_at`),
     db.execute(sql`
@@ -130,6 +133,36 @@ const recordsRoutes: FastifyPluginAsync = async (app) => {
   });
 
   r.get('/records/:id', { onRequest: read, schema: { params: idParam } }, async (req) => recordDetail(req.params.id));
+
+  /** Mapa de fotos: dónde se tomó cada foto del proyecto y si quedó dentro o fuera del polígono de su brigada. */
+  r.get(
+    '/projects/:projectId/photo-map',
+    { onRequest: read, schema: { params: projectParam, querystring: photoMapQuerySchema } },
+    async (req): Promise<PhotoMapPoint[]> => {
+      const q = req.query;
+      const where: SQL[] = [sql`a.project_id = ${req.params.projectId}`, sql`a.kind IN ('foto', 'foto_metodo')`, sql`a.geom IS NOT NULL`];
+      if (q.brigadeId) where.push(sql`x.brigade_id = ${q.brigadeId}`);
+      if (q.stationId) where.push(sql`a.station_id = ${q.stationId}`);
+      if (q.from) where.push(sql`(a.taken_at AT TIME ZONE 'America/Lima')::date >= ${q.from}::date`);
+      if (q.to) where.push(sql`(a.taken_at AT TIME ZONE 'America/Lima')::date <= ${q.to}::date`);
+      if (q.outside) where.push(sql`a.outside_area`);
+      const rows = await db.execute(sql`
+        SELECT a.id, a.kind, a.slot_key AS "slotKey", ST_Y(a.geom) AS lat, ST_X(a.geom) AS lng, a.accuracy,
+          ${iso(sql`a.taken_at`)} AS "takenAt", a.outside_area AS "outsideArea", (a.upload_status = 'subido') AS uploaded,
+          a.owner_type AS "ownerType", CASE WHEN a.owner_type = 'execution' THEN a.owner_id END AS "executionId",
+          x.brigade_id AS "brigadeId", b.name AS "brigadeName", s.code AS "stationCode", su.code AS "unitCode", u.full_name AS "takenBy"
+        FROM attachments a
+        CROSS JOIN LATERAL (SELECT ${ATTACHMENT_BRIGADE} AS brigade_id) x
+        LEFT JOIN brigades b ON b.id = x.brigade_id
+        LEFT JOIN stations s ON s.id = a.station_id
+        LEFT JOIN sampling_units su ON su.id = a.sampling_unit_id
+        JOIN users u ON u.id = a.uploaded_by_id
+        WHERE ${sql.join(where, sql` AND `)}
+        ORDER BY a.taken_at DESC
+        LIMIT 5000`);
+      return rows.rows as PhotoMapPoint[];
+    },
+  );
 };
 
 export default recordsRoutes;

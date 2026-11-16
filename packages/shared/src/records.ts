@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import type { ExecutionStatus, FieldRecord } from './field.js';
 import type { FormSchema, PhotoSlot } from './specialties.js';
+import type { WpGeometry } from './workPackage.js';
 
 /**
  * Consultas (Sprint 2.2): búsqueda de los registros de campo (ejecuciones de unidades de muestreo)
@@ -26,6 +27,16 @@ export const recordsQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
 });
 export type RecordsQuery = z.infer<typeof recordsQuerySchema>;
+
+export const photoMapQuerySchema = z.object({
+  brigadeId: z.string().uuid().optional(),
+  stationId: z.string().uuid().optional(),
+  from: isoDate.optional(),
+  to: isoDate.optional(),
+  /** Solo las fotos tomadas fuera del polígono de la brigada. */
+  outside: z.enum(['1', 'true']).optional(),
+});
+export type PhotoMapQuery = z.infer<typeof photoMapQuerySchema>;
 
 export const EXECUTION_STATUS_LABELS: Record<ExecutionStatus, string> = {
   en_curso: 'En curso',
@@ -80,6 +91,29 @@ export type RecordAttachment = {
   lng: number | null;
   accuracy: number | null;
   caption: string | null;
+  /** true = tomada fuera del polígono de la brigada; null = sin polígono o sin GPS. */
+  outsideArea: boolean | null;
+};
+
+/** Foto ubicada en el mapa (mapa de fotos del supervisor). */
+export type PhotoMapPoint = {
+  id: string;
+  kind: 'foto' | 'foto_metodo';
+  slotKey: string | null;
+  lat: number;
+  lng: number;
+  accuracy: number | null;
+  takenAt: string;
+  outsideArea: boolean | null;
+  uploaded: boolean;
+  ownerType: 'execution' | 'incident' | 'logistics' | 'inquiry_message';
+  /** Ficha del registro (solo fotos de unidades de muestreo). */
+  executionId: string | null;
+  brigadeId: string | null;
+  brigadeName: string | null;
+  stationCode: string | null;
+  unitCode: string | null;
+  takenBy: string;
 };
 
 export type RecordDetail = RecordRow & {
@@ -92,6 +126,8 @@ export type RecordDetail = RecordRow & {
   plannedDate: string | null;
   originalDate: string | null;
   station: { lat: number; lng: number; vegetationUnit: string | null; influenceArea: string | null; utmZone: number | null };
+  /** Polígono de trabajo de la brigada (GeoJSON), si se cargó. */
+  brigadeArea: { name: string | null; geometry: WpGeometry } | null;
   /** Distancia (m) entre el punto de inicio y la estación. */
   distanceToStationM: number | null;
   specialistDni: string;

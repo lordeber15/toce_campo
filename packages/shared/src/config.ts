@@ -15,6 +15,13 @@ export const projectSchema = z.object({
   utmZone: z.number().int().min(1).max(60).nullish(),
 });
 
+/** Polígono de trabajo de una brigada: geometrías del KMZ (se unen en el servidor). */
+export const brigadeAreaSchema = z.object({
+  name: z.string().trim().min(1).max(200),
+  sourceFile: z.string().max(255).nullish(),
+  geometries: z.array(z.object({ type: z.enum(['Polygon', 'MultiPolygon']), coordinates: z.array(z.any()) })).min(1).max(500),
+});
+
 export const brigadeSchema = z.object({
   name: z.string().trim().min(2).max(80),
   specialtyId: uuid.nullish(),

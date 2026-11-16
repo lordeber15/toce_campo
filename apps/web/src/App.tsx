@@ -23,6 +23,7 @@ import { TrackingPage } from './pages/Tracking';
 import { BrigadeTrackingPage } from './pages/BrigadeTracking';
 import { RecordDetailPage, RecordsPage } from './pages/Records';
 import { ReportsPage } from './pages/Reports';
+import { PhotoMapPage } from './pages/PhotoMap';
 
 export function App() {
   const { user, loading, can } = useAuth();
@@ -57,6 +58,7 @@ export function App() {
               <Route path="seguimiento/:id" element={<BrigadeTrackingPage />} />
               <Route path="registros" element={<RecordsPage />} />
               <Route path="registros/:id" element={<RecordDetailPage />} />
+              <Route path="mapa-fotos" element={<PhotoMapPage />} />
               <Route path="reportes" element={<ReportsPage />} />
               <Route path="alertas" element={<AlertsPage />} />
               <Route path="consultas" element={<InquiriesPage />} />

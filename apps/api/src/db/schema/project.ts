@@ -60,6 +60,10 @@ export const brigades = pgTable(
     leaderId: uuid('leader_id').references(() => users.id), // jefe de brigada
     logisticianId: uuid('logistician_id').references(() => users.id),
     supervisorId: uuid('supervisor_id').references(() => users.id),
+    /** Polígono de trabajo asignado (KMZ): las fotos fuera de él se advierten y se marcan. */
+    areaGeom: anyGeom('area_geom'),
+    areaName: text('area_name'),
+    areaSourceFile: text('area_source_file'),
     isActive: boolean('is_active').notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

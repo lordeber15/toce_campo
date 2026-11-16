@@ -61,7 +61,9 @@ const workPackageRoutes: FastifyPluginAsync = async (app) => {
           (b.leader_id = ${userId}) AS "isLeader",
           EXISTS (SELECT 1 FROM brigade_members bm WHERE bm.brigade_id = b.id AND bm.user_id = ${userId} AND bm.left_at IS NULL) AS "isMember",
           (b.supervisor_id = ${userId}) AS "isSupervisor",
-          (b.logistician_id = ${userId}) AS "isLogistician"
+          (b.logistician_id = ${userId}) AS "isLogistician",
+          b.area_name AS "areaName",
+          ST_AsGeoJSON(ST_SimplifyPreserveTopology(b.area_geom, 0.00002), 6)::json AS area
         FROM brigades b
         JOIN projects p ON p.id = b.project_id AND p.deleted_at IS NULL AND p.status <> 'cerrado'
         LEFT JOIN specialties sp ON sp.id = b.specialty_id
@@ -97,7 +99,8 @@ const workPackageRoutes: FastifyPluginAsync = async (app) => {
               (SELECT CASE WHEN e IS NULL THEN NULL ELSE json_build_array(ST_XMin(e), ST_YMin(e), ST_XMax(e), ST_YMax(e)) END
                FROM (SELECT ST_Extent(g)::geometry AS e FROM (
                  SELECT geom AS g FROM stations WHERE project_id = p.id AND deleted_at IS NULL
-                 UNION ALL SELECT geom FROM project_layers WHERE project_id = p.id) x) b) AS bounds
+                 UNION ALL SELECT geom FROM project_layers WHERE project_id = p.id
+                 UNION ALL SELECT area_geom FROM brigades WHERE project_id = p.id AND is_active AND area_geom IS NOT NULL) x) b) AS bounds
             FROM projects p WHERE p.id IN (${list(projectIds)}) ORDER BY p.code`)).rows as WpProject[])
         : [];
 

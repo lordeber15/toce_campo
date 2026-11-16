@@ -1,8 +1,14 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Image } from 'expo-image';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { Camera, GeoJSONSource, Layer, Map, UserLocation, type CameraRef } from '@maplibre/maplibre-react-native';
-import { classifyPoint, distanceMeters, formatUtm, latLngToUtm, type LayerKind, type WpLayer, type WpStation } from '@toce/shared';
+import {
+  checkBrigadeArea, classifyPoint, distanceMeters, formatUtm, latLngToUtm,
+  type AreaCheck, type LayerKind, type PhotoMapPoint, type WpBrigade, type WpLayer, type WpStation,
+} from '@toce/shared';
+import { api } from '../../lib/api';
+import { useField, type MapPhotoLocal } from '../../lib/field';
 import { BASEMAP_STYLE_URL, formatMb, useBasemap } from '../../lib/basemap';
 import { bearingLabel, formatDistance, usePosition } from '../../lib/location';
 import { todayLima, usePackageIndex } from '../../lib/workPackage';
@@ -21,7 +27,16 @@ const KIND: Record<LayerKind, { label: string; color: string }> = {
 const UV_PALETTE = ['#2E8B57', '#6BA34D', '#3E7C6B', '#8DB255', '#4C9A8A', '#A3B86C'];
 const KIND_ORDER: LayerKind[] = ['uv', 'aii', 'aid', 'superposicion', 'huella', 'otro'];
 
-type Picked = { kind: 'station'; station: WpStation } | { kind: 'point'; lat: number; lng: number };
+/** Polígono de trabajo de las brigadas y fotos: dentro (verde), fuera (rojo), sin verificar (gris). */
+const AREA_COLOR = '#F76707';
+const PHOTO_COLOR = { inside: '#2F9E44', outside: '#E03131', unknown: '#868E96' };
+
+/** Foto en el mapa: propia (guardada en el teléfono) o del equipo (supervisor, desde el servidor). */
+type MapPhoto =
+  | { src: 'mine'; id: string; lat: number; lng: number; outside: boolean | null; photo: MapPhotoLocal; brigade: WpBrigade | undefined }
+  | { src: 'team'; id: string; lat: number; lng: number; outside: boolean | null; photo: PhotoMapPoint };
+
+type Picked = { kind: 'station'; station: WpStation } | { kind: 'point'; lat: number; lng: number } | { kind: 'photo'; photo: MapPhoto };
 
 /** Mapa offline: base OSM, capas del proyecto, estaciones, tu ubicación y verificación del área de influencia. */
 export default function MapScreen() {
@@ -29,6 +44,7 @@ export default function MapScreen() {
   const index = usePackageIndex();
   const { online } = useAuth();
   const pos = usePosition();
+  const field = useField();
   const camera = useRef<CameraRef>(null);
   const today = todayLima();
 
@@ -55,6 +71,62 @@ export default function MapScreen() {
     return by;
   }, [layers]);
 
+  // Brigadas del usuario en este proyecto (y sus polígonos de trabajo).
+  const myBrigades = useMemo(() => index?.pkg.brigades.filter((b) => b.projectId === project?.id) ?? [], [index, project?.id]);
+  const areaBrigades = useMemo(() => myBrigades.filter((b) => b.area), [myBrigades]);
+  const areaData = useMemo<GeoJSON.FeatureCollection>(() => ({
+    type: 'FeatureCollection',
+    features: areaBrigades.map((b) => ({
+      type: 'Feature', id: b.id, properties: { name: b.areaName || b.name }, geometry: b.area as GeoJSON.Geometry,
+    })),
+  }), [areaBrigades]);
+  // El polígono que aplica a "tu ubicación": el de tu brigada como especialista o jefe; si no, el primero.
+  const workBrigade = myBrigades.find((b) => b.area && (b.myRoles.includes('miembro') || b.myRoles.includes('jefe'))) ?? areaBrigades[0];
+
+  // Mis fotos con ubicación (se recargan cuando cambia algo en el teléfono).
+  const [mine, setMine] = useState<MapPhotoLocal[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void field.myPhotos().then((rows) => { if (alive) setMine(rows); });
+    return () => { alive = false; };
+  }, [field.myPhotos, field.rev]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Supervisor: fotos de las brigadas que supervisa (con conexión), del periodo del paquete.
+  const supervised = useMemo(() => myBrigades.filter((b) => b.myRoles.includes('supervisor')).map((b) => b.id), [myBrigades]);
+  const [team, setTeam] = useState<PhotoMapPoint[]>([]);
+  const [teamError, setTeamError] = useState<string | null>(null);
+  const supervisedKey = supervised.join(',');
+  useEffect(() => {
+    if (!online || !project || !supervised.length || !index) return;
+    let alive = true;
+    const qs = new URLSearchParams({ from: index.pkg.from });
+    api<PhotoMapPoint[]>(`/projects/${project.id}/photo-map?${qs}`)
+      .then((rows) => { if (alive) { setTeam(rows.filter((r) => r.brigadeId && supervised.includes(r.brigadeId))); setTeamError(null); } })
+      .catch((e: unknown) => { if (alive) setTeamError(e instanceof Error ? e.message : 'No se pudieron cargar las fotos'); });
+    return () => { alive = false; };
+  }, [online, project?.id, supervisedKey, index?.pkg.from, field.rev]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const photos = useMemo<MapPhoto[]>(() => {
+    const out: MapPhoto[] = mine.map((ph) => {
+      const brigade = ph.brigadeId ? index?.brigades.get(ph.brigadeId) : undefined;
+      const c = checkBrigadeArea(brigade, { lat: ph.lat!, lng: ph.lng! });
+      return { src: 'mine', id: ph.clientId, lat: ph.lat!, lng: ph.lng!, outside: c.status === 'fuera' ? true : c.status === 'dentro' ? false : null, photo: ph, brigade };
+    });
+    for (const ph of team) out.push({ src: 'team', id: ph.id, lat: ph.lat, lng: ph.lng, outside: ph.outsideArea, photo: ph });
+    return out;
+  }, [mine, team, index]);
+  const photoData = useMemo<GeoJSON.FeatureCollection>(() => ({
+    type: 'FeatureCollection',
+    features: photos
+      .filter((ph) => !hidden.has(ph.src === 'mine' ? 'mis-fotos' : 'fotos-equipo'))
+      .map((ph) => ({
+        type: 'Feature', id: `${ph.src}-${ph.id}`,
+        properties: { key: `${ph.src}:${ph.id}`, state: ph.outside === true ? 'fuera' : ph.outside === false ? 'dentro' : 'nd' },
+        geometry: { type: 'Point', coordinates: [ph.lng, ph.lat] },
+      })),
+  }), [photos, hidden]);
+  const outsideCount = photos.filter((ph) => ph.outside === true).length;
+
   const stationData = useMemo<GeoJSON.FeatureCollection>(() => ({
     type: 'FeatureCollection',
     features: stations.map((s) => ({
@@ -74,6 +146,7 @@ export default function MapScreen() {
 
   const me = pos.status === 'ok' ? pos.position : null;
   const myAreas = me ? classifyPoint(layers, me.lat, me.lng) : null;
+  const myWorkArea = workBrigade ? checkBrigadeArea(workBrigade, me) : null;
   const fit = () => project.bounds && camera.current?.fitBounds(project.bounds, { padding: { top: 70, right: 40, bottom: 220, left: 40 }, duration: 600 });
   const toggle = (k: string) => setHidden((h) => {
     const n = new Set(h);
@@ -123,6 +196,13 @@ export default function MapScreen() {
           );
         })}
 
+        {areaData.features.length > 0 && !hidden.has('poligono') && (
+          <GeoJSONSource id="poligono-brigada" data={areaData}>
+            <Layer type="fill" id="poligono-brigada-fill" style={{ fillColor: AREA_COLOR, fillOpacity: 0.08 }} />
+            <Layer type="line" id="poligono-brigada-line" style={{ lineColor: AREA_COLOR, lineWidth: 3, lineDasharray: [3, 2] }} />
+          </GeoJSONSource>
+        )}
+
         {!hidden.has('estaciones') && (
           <GeoJSONSource
             id="estaciones"
@@ -156,6 +236,36 @@ export default function MapScreen() {
           </GeoJSONSource>
         )}
 
+        {photoData.features.length > 0 && (
+          <GeoJSONSource
+            id="fotos"
+            data={photoData}
+            hitbox={{ top: 16, right: 16, bottom: 16, left: 16 }}
+            onPress={(e) => {
+              e.stopPropagation();
+              const key = e.nativeEvent.features[0]?.properties?.key as string | undefined;
+              const ph = key ? photos.find((x) => `${x.src}:${x.id}` === key) : undefined;
+              if (ph) setPicked({ kind: 'photo', photo: ph });
+            }}
+          >
+            <Layer
+              type="circle"
+              id="fotos-punto"
+              style={{
+                circleRadius: 6,
+                circleColor: ['match', ['get', 'state'], 'fuera', PHOTO_COLOR.outside, 'dentro', PHOTO_COLOR.inside, PHOTO_COLOR.unknown],
+                circleStrokeWidth: 2,
+                circleStrokeColor: '#FFFFFF',
+              }}
+            />
+          </GeoJSONSource>
+        )}
+        {picked?.kind === 'photo' && (
+          <GeoJSONSource id="foto-sel" data={{ type: 'Point', coordinates: [picked.photo.lng, picked.photo.lat] }}>
+            <Layer type="circle" id="foto-sel-c" style={{ circleRadius: 11, circleColor: 'rgba(0,0,0,0)', circleStrokeWidth: 3, circleStrokeColor: '#111' }} />
+          </GeoJSONSource>
+        )}
+
         {picked?.kind === 'point' && (
           <GeoJSONSource id="punto" data={{ type: 'Point', coordinates: [picked.lng, picked.lat] }}>
             <Layer type="circle" id="punto-c" style={{ circleRadius: 6, circleColor: '#111', circleStrokeWidth: 2, circleStrokeColor: '#fff' }} />
@@ -172,7 +282,13 @@ export default function MapScreen() {
 
       {/* Capas */}
       <ScrollView horizontal style={s.chipsBar} contentContainerStyle={s.chips} showsHorizontalScrollIndicator={false}>
-        {[...kinds.map((k) => ({ key: k as string, label: KIND[k].label, color: KIND[k].color })), { key: 'estaciones', label: 'Estaciones', color: colors.primary }].map((c) => {
+        {[
+          ...(areaData.features.length ? [{ key: 'poligono', label: 'Polígono de brigada', color: AREA_COLOR }] : []),
+          ...(mine.length ? [{ key: 'mis-fotos', label: `Mis fotos (${mine.length})`, color: PHOTO_COLOR.inside }] : []),
+          ...(supervised.length ? [{ key: 'fotos-equipo', label: `Fotos de mis brigadas (${team.length})`, color: '#1C7ED6' }] : []),
+          ...kinds.map((k) => ({ key: k as string, label: KIND[k].label, color: KIND[k].color })),
+          { key: 'estaciones', label: 'Estaciones', color: colors.primary },
+        ].map((c) => {
           const on = !hidden.has(c.key);
           return (
             <Pressable key={c.key} onPress={() => toggle(c.key)} style={[s.chip, !on && s.chipOff]} accessibilityRole="switch" accessibilityState={{ checked: on }}>
@@ -202,7 +318,9 @@ export default function MapScreen() {
       {/* Panel inferior */}
       <View style={s.sheet}>
         <OfflineRow basemap={basemap} online={online} />
-        {picked?.kind === 'station' ? (
+        {picked?.kind === 'photo' ? (
+          <PhotoPanel photo={picked.photo} online={online} onClose={() => setPicked(null)} />
+        ) : picked?.kind === 'station' ? (
           <StationPanel station={picked.station} me={me} layers={layers} onClose={() => setPicked(null)} />
         ) : picked?.kind === 'point' ? (
           <PointPanel lat={picked.lat} lng={picked.lng} me={me} layers={layers} onClose={() => setPicked(null)} />
@@ -211,15 +329,78 @@ export default function MapScreen() {
             <Text style={s.h3}>Tu ubicación</Text>
             {me ? (
               <>
+                {myWorkArea && <WorkAreaLine check={myWorkArea} />}
                 <AreaLine areas={myAreas!} />
                 <Text style={s.small}>{formatUtm(latLngToUtm(me.lat, me.lng))}{me.accuracy != null ? ` · GPS ±${Math.round(me.accuracy)} m` : ''}</Text>
               </>
             ) : (
               <Text style={s.small}>{pos.status === 'denied' ? 'Sin permiso de ubicación.' : 'Buscando GPS…'}</Text>
             )}
-            <Text style={s.hint}>Toca una estación para ver la distancia, o cualquier punto del mapa para medir desde tu ubicación.</Text>
+            {outsideCount > 0 && <Text style={[s.small, { color: PHOTO_COLOR.outside, fontWeight: '700' }]}>{outsideCount} foto{outsideCount === 1 ? '' : 's'} fuera del polígono</Text>}
+            {teamError && supervised.length > 0 && <Text style={s.small}>Fotos de tus brigadas: {teamError}</Text>}
+            {!online && supervised.length > 0 && <Text style={s.small}>Sin conexión: no se ven las fotos de tus brigadas.</Text>}
+            <Text style={s.hint}>Toca una estación o una foto para ver el detalle, o cualquier punto del mapa para medir desde tu ubicación.</Text>
           </View>
         )}
+      </View>
+    </View>
+  );
+}
+
+function WorkAreaLine({ check }: { check: AreaCheck }) {
+  if (check.status === 'sin_area' || check.status === 'sin_gps') return null;
+  const inside = check.status === 'dentro';
+  return (
+    <Text style={[s.area, { color: inside ? PHOTO_COLOR.inside : PHOTO_COLOR.outside }]}>
+      {inside ? `Dentro de ${check.areaName}` : `Fuera de ${check.areaName} · a ${check.distanceM < 10 ? 'menos de 10 m' : formatDistance(check.distanceM)}`}
+    </Text>
+  );
+}
+
+const when = (iso: string) =>
+  new Date(iso).toLocaleString('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+
+function PhotoPanel({ photo, online, onClose }: { photo: MapPhoto; online: boolean; onClose: () => void }) {
+  const [remote, setRemote] = useState<{ id: string; url: string } | null>(null);
+  const team = photo.src === 'team' ? photo.photo : null;
+  const remoteUrl = remote && remote.id === team?.id ? remote.url : null;
+  useEffect(() => {
+    if (!team || !team.uploaded || !online) return;
+    let alive = true;
+    api<{ url: string }>(`/field/attachments/${team.id}/url?variant=compressed`).then((r) => { if (alive) setRemote({ id: team.id, url: r.url }); }).catch(() => {});
+    return () => { alive = false; };
+  }, [team?.id, online]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const local = photo.src === 'mine' && !photo.photo.freed ? photo.photo.path : null;
+  const uri = local ?? remoteUrl;
+  const title = photo.src === 'mine'
+    ? [photo.photo.unitCode, photo.brigade?.name].filter(Boolean).join(' · ') || 'Mi foto'
+    : [photo.photo.unitCode ?? photo.photo.stationCode, photo.photo.brigadeName].filter(Boolean).join(' · ') || 'Foto';
+  const { takenAt, accuracy } = photo.photo;
+  const status = photo.outside === true ? { text: 'Fuera del polígono', color: PHOTO_COLOR.outside }
+    : photo.outside === false ? { text: 'Dentro del polígono', color: PHOTO_COLOR.inside }
+      : { text: 'Sin polígono para verificar', color: colors.text2 };
+  return (
+    <View style={{ gap: 8 }}>
+      <View style={s.row}>
+        <Text style={[s.h3, { flex: 1 }]} numberOfLines={1}>{title}</Text>
+        <Pressable onPress={onClose} hitSlop={10} accessibilityRole="button" accessibilityLabel="Cerrar"><Text style={s.close}>✕</Text></Pressable>
+      </View>
+      <View style={[s.row, { alignItems: 'flex-start', gap: 12 }]}>
+        {uri ? (
+          <Image source={{ uri }} style={s.thumb} contentFit="cover" accessibilityLabel={`Foto ${title}`} />
+        ) : (
+          <View style={[s.thumb, s.center]}>
+            <Text style={[s.hint, { textAlign: 'center' }]}>
+              {photo.src === 'mine' ? 'Ya enviada (liberada del teléfono)' : !team?.uploaded ? 'Aún en el teléfono del especialista' : online ? 'Cargando…' : 'Sin conexión'}
+            </Text>
+          </View>
+        )}
+        <View style={{ flex: 1, gap: 4 }}>
+          <Text style={[s.area, { color: status.color, fontSize: 15 }]}>{status.text}</Text>
+          <Text style={s.small}>{when(takenAt)}{team ? ` · ${team.takenBy}` : ''}</Text>
+          <Text style={s.small}>{formatUtm(latLngToUtm(photo.lat, photo.lng))}{accuracy != null ? ` · ±${Math.round(accuracy)} m` : ''}</Text>
+        </View>
       </View>
     </View>
   );
@@ -350,6 +531,7 @@ const s = StyleSheet.create({
   small: { color: colors.text2, fontSize: 13, fontVariant: ['tabular-nums'] },
   hint: { color: colors.text2, fontSize: 12, lineHeight: 17 },
   close: { color: colors.text2, fontSize: 18, paddingHorizontal: 4 },
+  thumb: { width: 112, height: 84, borderRadius: 8, backgroundColor: '#EEF1EC' },
   link: { paddingTop: 4 },
   linkText: { color: colors.primary, fontWeight: '700' },
   offline: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: '#EEF1EC' },

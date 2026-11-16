@@ -19,15 +19,6 @@ function RootNavigator() {
       <Stack.Protected guard={status === 'signedOut'}>
         <Stack.Screen name="login" />
       </Stack.Protected>
-      <Stack.Protected guard={status === 'needsPin'}>
-        <Stack.Screen name="setup-pin" />
-      </Stack.Protected>
-      <Stack.Protected guard={status === 'reauth'}>
-        <Stack.Screen name="reauth" />
-      </Stack.Protected>
-      <Stack.Protected guard={status === 'locked'}>
-        <Stack.Screen name="unlock" />
-      </Stack.Protected>
       <Stack.Protected guard={status === 'unlocked'}>
         <Stack.Screen name="(app)" />
       </Stack.Protected>

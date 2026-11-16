@@ -21,6 +21,7 @@ export function LayersPage() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const layers = useQuery({ queryKey: ['layers', project?.id], enabled: !!project, queryFn: () => api<FeatureCollection>(`/projects/${project!.id}/layers`) });
+  const areas = useQuery({ queryKey: ['brigade-areas', project?.id], enabled: !!project, queryFn: () => api<FeatureCollection>(`/projects/${project!.id}/brigade-areas`) });
   const stations = useQuery({ queryKey: ['stations', project?.id], enabled: !!project, queryFn: () => api<Station[]>(`/projects/${project!.id}/stations`) });
   const del = useMutation({
     mutationFn: (id: string) => api(`/projects/${project!.id}/layers/${id}`, { method: 'DELETE' }),
@@ -63,7 +64,7 @@ export function LayersPage() {
       {parseError && <div className="alert-error" style={{ marginBottom: 12 }}>{parseError}</div>}
       <div className="split">
         <div className="card" style={{ padding: 12 }}>
-          <MapView layers={layers.data} stations={stations.data ?? []} height={560} />
+          <MapView layers={layers.data} areas={areas.data} stations={stations.data ?? []} height={560} />
           <MapLegend />
         </div>
         <div className="card">

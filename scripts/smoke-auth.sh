@@ -7,6 +7,8 @@ post() { curl -s -X POST "$B$1" -H 'content-type: application/json' ${3:+-H "aut
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
 check() { [ $# -eq 3 ] && [ "$2" = "$3" ] && echo "  OK   $1 ($2)" || { echo "  FAIL $1: esperado $3, obtenido $2"; FAILS=$((FAILS+1)); }; }
 FAILS=0
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+psql() { if [ -n "${USE_DOCKER:-}" ]; then docker exec toce-postgres psql -U toce -d toce -tAc "$1"; else node "$ROOT/scripts/lib/sql.cjs" "$1"; fi; }
 
 check "health" "$(code $B/health)" 200
 check "login con contraseña mala" "$(code -X POST $B/auth/login -H 'content-type: application/json' -d '{"dni":"20000001","password":"mala"}')" 401
@@ -36,6 +38,20 @@ CREATED=$(curl -s -X POST $B/users -H "authorization: Bearer $C" -H 'content-typ
 [ -n "$CREATED" ] && [ "$CREATED" != "undefined" ] && echo "  OK   crear usuario" || { echo "  FAIL crear usuario"; FAILS=$((FAILS+1)); }
 check "DNI duplicado" "$(code -X POST $B/users -H "authorization: Bearer $C" -H 'content-type: application/json' -d "$NEWUSER")" 409
 check "validación de datos" "$(code -X POST $B/users -H "authorization: Bearer $C" -H 'content-type: application/json' -d '{"dni":"x","fullName":"a","password":"1","roles":[]}')" 400
+
+# Sin PIN: tras el primer ingreso la sesión del teléfono queda abierta (refresh de 365 días)
+# hasta cerrar sesión o hasta que el administrador la revoque o desactive al usuario.
+echo "Sesión permanente del teléfono"
+check "refresh dura ~365 días" "$(psql "select (expires_at - created_at) between interval '364 days' and interval '366 days' from sessions where user_id = (select id from users where dni='20000001') order by created_at desc limit 1")" t
+UL=$(post /auth/login "{\"dni\":\"$DNI\",\"password\":\"secreto1\",\"deviceId\":\"device-PRUEBA-$DNI\"}")
+UAT=$(echo "$UL" | j accessToken); URT=$(echo "$UL" | j refreshToken)
+URT2=$(post /auth/refresh "{\"refreshToken\":\"$URT\"}" | j refreshToken)
+[ -n "$URT2" ] && [ "$URT2" != "undefined" ] && echo "  OK   la sesión se renueva sin PIN ni contraseña" || { echo "  FAIL renovación de sesión"; FAILS=$((FAILS+1)); }
+check "desactivar usuario" "$(code -X PATCH $B/users/$CREATED -H "authorization: Bearer $C" -H 'content-type: application/json' -d '{"isActive":false}')" 200
+check "desactivado: la sesión del teléfono ya no se renueva" "$(code -X POST $B/auth/refresh -H 'content-type: application/json' -d "{\"refreshToken\":\"$URT2\"}")" 401
+check "desactivado: /auth/me rechaza el token vigente" "$(code $B/auth/me -H "authorization: Bearer $UAT")" 401
+ULOGIN="{\"dni\":\"$DNI\",\"password\":\"secreto1\"}"
+check "desactivado: no puede volver a ingresar" "$(code -X POST $B/auth/login -H 'content-type: application/json' -d "$ULOGIN")" 403
 check "eliminar usuario de prueba" "$(code -X DELETE $B/users/$CREATED -H "authorization: Bearer $C")" 200
 check "catálogo de métodos" "$(code $B/methods -H "authorization: Bearer $C")" 200
 

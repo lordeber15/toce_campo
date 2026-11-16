@@ -78,6 +78,13 @@
       "when": 1794716267967,
       "tag": "0010_logistics_reception",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794799606750,
+      "tag": "0011_brigade_area",
+      "breakpoints": true
     }
   ]
 }

@@ -5,12 +5,16 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useProject } from '../lib/project';
 import { Dialog, ErrorBox, NoProject } from '../components/Dialog';
+import { MapView } from '../components/MapView';
+import { parseKmlFile } from '../lib/kmz';
+import type { FeatureCollection, Geometry } from 'geojson';
 
 type Member = { id: string; fullName: string; dni: string; specialtyId: string | null };
 type Brigade = {
   id: string; name: string; isActive: boolean; specialtyId: string | null; specialtyName: string | null;
   leaderId: string | null; leaderName: string | null; logisticianId: string | null; logisticianName: string | null;
   supervisorId: string | null; supervisorName: string | null; members: Member[]; schedules: number;
+  areaName: string | null; areaSourceFile: string | null; areaHa: number | null; photosOutside: number;
 };
 type Candidate = { id: string; fullName: string; dni: string; roles: Role[]; specialtyId: string | null; brigadeId: string | null };
 type Specialty = { id: string; name: string };
@@ -21,6 +25,11 @@ export function BrigadesPage() {
   const isAdmin = can(...ADMIN_ROLES);
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Brigade | 'new' | null>(null);
+  const [areaFor, setAreaFor] = useState<Brigade | null>(null);
+  const removeArea = useMutation({
+    mutationFn: (id: string) => api(`/brigades/${id}/area`, { method: 'DELETE' }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['brigades'] }); qc.invalidateQueries({ queryKey: ['brigade-areas'] }); },
+  });
   const brigades = useQuery({ queryKey: ['brigades', project?.id], enabled: !!project, queryFn: () => api<Brigade[]>(`/projects/${project!.id}/brigades`) });
   const deactivate = useMutation({
     mutationFn: (id: string) => api(`/brigades/${id}`, { method: 'DELETE' }),
@@ -52,6 +61,24 @@ export function BrigadesPage() {
               <div className="section-title">Especialistas ({b.members.length})</div>
               <div className="pill-list">{b.members.map((m) => <span key={m.id} className="chip">{m.fullName}</span>)}{!b.members.length && <span className="hint">Sin miembros</span>}</div>
             </div>
+            <div>
+              <div className="section-title">Polígono de trabajo</div>
+              {b.areaHa != null ? (
+                <p style={{ margin: 0, fontSize: 14 }}>
+                  <strong>{b.areaName}</strong> · {b.areaHa.toLocaleString('es-PE')} ha
+                  {b.areaSourceFile && <span className="hint"> · {b.areaSourceFile}</span>}
+                  {b.photosOutside > 0 && <span className="chip chip-warn" style={{ marginLeft: 6 }}>{b.photosOutside} foto{b.photosOutside === 1 ? '' : 's'} fuera</span>}
+                </p>
+              ) : <span className="hint">Sin polígono: las fotos no se verifican.</span>}
+              {isAdmin && b.isActive && (
+                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+                  <button className="btn btn-sm" onClick={() => setAreaFor(b)}>{b.areaHa != null ? 'Reemplazar KMZ' : 'Cargar KMZ'}</button>
+                  {b.areaHa != null && (
+                    <button className="btn btn-sm btn-danger" disabled={removeArea.isPending} onClick={() => confirm(`¿Quitar el polígono de ${b.name}?`) && removeArea.mutate(b.id)}>Quitar</button>
+                  )}
+                </div>
+              )}
+            </div>
             {isAdmin && b.isActive && (
               <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
                 <button className="btn btn-sm" onClick={() => setEditing(b)}>Editar</button>
@@ -62,6 +89,7 @@ export function BrigadesPage() {
         ))}
       </div>
       {brigades.data && !brigades.data.length && <div className="card empty">Aún no hay brigadas en este proyecto.</div>}
+      {areaFor && <AreaDialog brigade={areaFor} onClose={() => setAreaFor(null)} onSaved={() => { setAreaFor(null); qc.invalidateQueries({ queryKey: ['brigades'] }); qc.invalidateQueries({ queryKey: ['brigade-areas'] }); }} />}
       {editing && <BrigadeDialog projectId={project.id} brigade={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); qc.invalidateQueries({ queryKey: ['brigades'] }); qc.invalidateQueries({ queryKey: ['projects'] }); }} />}
     </>
   );
@@ -151,6 +179,79 @@ function BrigadeDialog({ projectId, brigade, onClose, onSaved }: { projectId: st
           </select>
         </div>
       </div>
+    </Dialog>
+  );
+}
+
+type AreaPreview = { fileName: string; geometries: Geometry[]; preview: FeatureCollection; names: string[] };
+
+/** Carga el polígono de trabajo de la brigada desde un KMZ/KML (se unen todos sus polígonos). */
+function AreaDialog({ brigade, onClose, onSaved }: { brigade: Brigade; onClose: () => void; onSaved: () => void }) {
+  const [data, setData] = useState<AreaPreview | null>(null);
+  const [name, setName] = useState(brigade.areaName ?? '');
+  const [readError, setReadError] = useState<string | null>(null);
+  const [reading, setReading] = useState(false);
+
+  const onFile = async (file: File | undefined) => {
+    if (!file) return;
+    setReading(true);
+    setReadError(null);
+    setData(null);
+    try {
+      const all = await parseKmlFile(file);
+      const polys = all.filter((f) => f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon');
+      if (!polys.length) throw new Error('El archivo no tiene polígonos (solo puntos o líneas).');
+      setData({
+        fileName: file.name,
+        geometries: polys.map((f) => f.geometry),
+        names: polys.map((f) => f.name),
+        preview: {
+          type: 'FeatureCollection',
+          features: polys.map((f, i) => ({ type: 'Feature', id: i, geometry: f.geometry, properties: { name: brigade.name, areaName: f.name } })),
+        },
+      });
+      if (!name) setName(polys.length === 1 && polys[0]!.name !== '(sin nombre)' ? polys[0]!.name : file.name.replace(/\.(kmz|kml)$/i, ''));
+    } catch (e) {
+      setReadError(e instanceof Error ? e.message : 'No se pudo leer el archivo');
+    } finally {
+      setReading(false);
+    }
+  };
+
+  const save = useMutation({
+    mutationFn: () => api(`/brigades/${brigade.id}/area`, {
+      method: 'PUT',
+      body: JSON.stringify({ name: name.trim(), sourceFile: data!.fileName, geometries: data!.geometries }),
+    }),
+    onSuccess: onSaved,
+  });
+
+  return (
+    <Dialog
+      wide
+      title={`Polígono de trabajo · ${brigade.name}`}
+      onClose={onClose}
+      onSubmit={() => save.mutate()}
+      footer={<><button type="button" className="btn" onClick={onClose}>Cancelar</button><button className="btn btn-primary" disabled={save.isPending || !data || !name.trim()}>{save.isPending ? 'Guardando…' : 'Guardar polígono'}</button></>}
+    >
+      <ErrorBox error={save.error ?? (readError ? new Error(readError) : null)} />
+      <p className="hint" style={{ marginTop: 0 }}>
+        Las fotos que tome la brigada fuera de este polígono se advierten en el teléfono y se marcan para el supervisor.
+        Si el archivo trae varios polígonos, se unen en uno solo.
+      </p>
+      <div className="grid-2">
+        <div className="field">
+          <label htmlFor="a-file">Archivo KMZ o KML</label>
+          <input id="a-file" className="input" type="file" accept=".kmz,.kml" onChange={(e) => void onFile(e.target.files?.[0])} />
+          {reading && <span className="hint">Leyendo…</span>}
+          {data && <span className="hint">{data.geometries.length} polígono{data.geometries.length === 1 ? '' : 's'}: {data.names.slice(0, 4).join(', ')}{data.names.length > 4 ? '…' : ''}</span>}
+        </div>
+        <div className="field">
+          <label htmlFor="a-name">Nombre del polígono</label>
+          <input id="a-name" className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Zona de trabajo Sierra 2" required />
+        </div>
+      </div>
+      {data && <MapView areas={data.preview} height={300} />}
     </Dialog>
   );
 }

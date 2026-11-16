@@ -41,3 +41,36 @@ export async function classifyStations(exec: Exec, projectId: string, stationId?
     WHERE s.id = c.id
   `);
 }
+
+/**
+ * Brigada a la que pertenece una foto según su dueño (ejecución, alerta o registro logístico).
+ * Las respuestas a consultas no tienen brigada.
+ */
+export const ATTACHMENT_BRIGADE = sql`
+  CASE a.owner_type
+    WHEN 'execution' THEN (SELECT e.brigade_id FROM executions e WHERE e.id = a.owner_id)
+    WHEN 'incident' THEN (SELECT i.brigade_id FROM incidents i WHERE i.id = a.owner_id)
+    WHEN 'logistics' THEN coalesce(
+      (SELECT x.brigade_id FROM logistics_vehicles x WHERE x.id = a.owner_id),
+      (SELECT x.brigade_id FROM logistics_support_staff x WHERE x.id = a.owner_id),
+      (SELECT x.brigade_id FROM logistics_expenses x WHERE x.id = a.owner_id),
+      (SELECT x.brigade_id FROM logistics_samples x WHERE x.id = a.owner_id),
+      (SELECT x.brigade_id FROM logistics_equipment x WHERE x.id = a.owner_id))
+  END`;
+
+/**
+ * Marca si cada foto se tomó fuera del polígono de su brigada:
+ * true = fuera; false = dentro; null = sin polígono, sin GPS o sin brigada.
+ */
+export async function classifyPhotos(exec: Exec, where: ReturnType<typeof sql>) {
+  await exec.execute(sql`
+    UPDATE attachments a SET outside_area = (
+      SELECT CASE WHEN b.area_geom IS NULL OR a.geom IS NULL THEN NULL ELSE NOT ST_Intersects(b.area_geom, a.geom) END
+      FROM brigades b WHERE b.id = ${ATTACHMENT_BRIGADE})
+    WHERE a.kind IN ('foto', 'foto_metodo') AND ${where}`);
+}
+
+/** Recalcula las fotos de una brigada (al cargar o quitar su polígono). */
+export async function reclassifyBrigadePhotos(exec: Exec, brigadeId: string) {
+  await classifyPhotos(exec, sql`(${ATTACHMENT_BRIGADE}) = ${brigadeId}`);
+}

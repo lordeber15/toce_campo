@@ -26,6 +26,7 @@ const NAV: { title?: string; items: Item[] }[] = [
     title: 'Información',
     items: [
       { to: '/registros', label: 'Registros de campo', roles: VIEWERS },
+      { to: '/mapa-fotos', label: 'Mapa de fotos', roles: VIEWERS },
       { to: '/documentos', label: 'Documentos y evidencias', roles: VIEWERS },
       { to: '/reportes', label: 'Reportes', roles: VIEWERS },
     ],

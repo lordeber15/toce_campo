@@ -30,7 +30,7 @@ export default function LoginScreen() {
       <SafeAreaView edges={['top']} style={s.hero}>
         <Text style={s.kicker}>TOCE</Text>
         <Text style={s.title}>Plataforma de Campo</Text>
-        <Text style={s.subtitle}>Primer ingreso con tu DNI. Luego podrás entrar sin conexión con tu PIN.</Text>
+        <Text style={s.subtitle}>Ingresa con tu DNI y contraseña. La sesión queda abierta, también sin conexión.</Text>
       </SafeAreaView>
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
         <ScrollView contentContainerStyle={s.form} keyboardShouldPersistTaps="handled">

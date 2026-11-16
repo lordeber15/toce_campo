@@ -57,7 +57,8 @@ check "jefe de proyecto no decide: 403" "$(curl -s -o /dev/null -w '%{http_code}
 R=$(post "/incidents/$INC_ID/decision" "$COO" '{"decision":"aprobada","response":"Se reprograma la estación","correctiveAction":"Mantener esfuerzo"}')
 check "coordinación aprueba" "$(echo "$R" | js 'p.status')" resuelta
 
-NEW=$(date -v+3d +%Y-%m-%d)
+# Nueva fecha distinta de la programada (si hoy+3 coincide con ella, la API la rechaza con razón).
+NEW=$(date -v+3d +%Y-%m-%d); [ "$NEW" = "$DATE0" ] && NEW=$(date -v+4d +%Y-%m-%d)
 R=$(post "/incidents/$INC_ID/reschedule" "$COO" "{\"scheduleId\":\"$SCHED\",\"newDate\":\"$NEW\",\"reason\":\"Lluvia intensa\",\"reopenUnits\":true}")
 check "reprograma la visita" "$(echo "$R" | js 'p.toDate+":"+(p.reopened>=1)')" "$NEW:true"
 check "cronograma actualizado" "$(psql "select to_char(planned_date,'YYYY-MM-DD') from schedules where id='$SCHED'")" "$NEW"

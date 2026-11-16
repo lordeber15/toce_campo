@@ -185,15 +185,14 @@ export function LinkRow({ text, unread, onPress }: { text: string; unread?: bool
 
 /** Nombre, roles y botones de bloqueo / cierre de sesión. */
 export function AccountFooter() {
-  const { user, lock, signOut } = useAuth();
+  const { user, signOut } = useAuth();
   const specialty = user?.specialtyCode ? SPECIALTY_LABELS[user.specialtyCode as SpecialtyCode] ?? user.specialtyCode : null;
   return (
     <View style={s.account}>
       <Text style={s.accountName}>{user?.fullName}</Text>
       <Text style={s.accountMeta}>{[user?.roles.map((r) => ROLE_LABELS[r]).join(' · '), specialty].filter(Boolean).join(' · ')}</Text>
       <View style={s.accountBtns}>
-        <Button title="Bloquear" variant="outline" onPress={lock} style={{ flex: 1, height: 44 }} />
-        <Button title="Cerrar sesión" variant="ghost" onPress={signOut} style={{ flex: 1, height: 44 }} />
+        <Button title="Cerrar sesión" variant="outline" onPress={signOut} style={{ flex: 1, height: 44 }} />
       </View>
     </View>
   );

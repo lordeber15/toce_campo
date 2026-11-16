@@ -86,6 +86,8 @@ export const attachments = pgTable(
     geom: pointGeom('geom'),
     accuracy: doublePrecision('accuracy'),
     altitude: doublePrecision('altitude'),
+    /** true si se tomó fuera del polígono de la brigada; null si no hay polígono o GPS. */
+    outsideArea: boolean('outside_area'),
     takenAt: timestamp('taken_at', { withTimezone: true }).notNull(),
     uploadedById: uuid('uploaded_by_id')
       .notNull()

@@ -49,6 +49,9 @@ export type WpBrigade = {
   leaderId: string | null;
   leaderName: string | null;
   members: { id: string; fullName: string; phone: string | null; specialtyCode: string | null }[];
+  /** Polígono de trabajo asignado a la brigada (KMZ), simplificado. null si no se cargó. */
+  areaName: string | null;
+  area: WpGeometry | null;
 };
 
 export type WpSchedule = {

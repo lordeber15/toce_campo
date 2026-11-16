@@ -74,6 +74,9 @@ export type LocalAttachment = {
   syncError: string | null;
 };
 
+/** Foto propia ubicada en el mapa, con el contexto de su dueño. */
+export type MapPhotoLocal = LocalAttachment & { brigadeId: string | null; unitCode: string | null; stationId: string | null };
+
 export type NewAttachment = Omit<LocalAttachment, 'replaced' | 'metaSynced' | 'uploaded' | 'originalUploaded' | 'syncError' | 'freed' | 'ownerType'> & {
   ownerType?: OwnerType;
 };
@@ -189,6 +192,8 @@ type Ctx = {
   start: (p: StartParams) => Promise<LocalExecution>;
   update: (clientId: string, patch: Partial<Pick<LocalExecution, 'status' | 'finishedAt' | 'formData' | 'observations'>>) => Promise<void>;
   attachmentsOf: (ownerClientId: string) => Promise<LocalAttachment[]>;
+  /** Fotos del usuario con ubicación (para el mapa), las más recientes primero. */
+  myPhotos: () => Promise<MapPhotoLocal[]>;
   addAttachment: (a: NewAttachment, replaceSlot?: boolean) => Promise<void>;
   removeAttachment: (clientId: string) => Promise<boolean>;
   saveIncident: (draft: IncidentDraft) => Promise<void>;
@@ -499,6 +504,24 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
       `SELECT ${ATT_COLS} FROM attachments WHERE execution_client_id = ? AND replaced = 0 ORDER BY taken_at`, ownerClientId);
   }, []);
 
+  const myPhotos = useCallback<Ctx['myPhotos']>(async () => {
+    if (!userId) return [];
+    const db = await getDb();
+    return db.getAllAsync<MapPhotoLocal>(
+      `SELECT ${attCols('a.')},
+         COALESCE(e.brigade_id, i.brigade_id, l.brigade_id) AS brigadeId,
+         COALESCE(e.unit_code, i.unit_code) AS unitCode,
+         COALESCE(e.station_id, i.station_id) AS stationId
+       FROM attachments a
+       LEFT JOIN executions e ON a.owner_type = 'execution' AND e.client_id = a.execution_client_id
+       LEFT JOIN incidents i ON a.owner_type = 'incident' AND i.client_id = a.execution_client_id
+       LEFT JOIN logistics l ON a.owner_type = 'logistics' AND l.client_id = a.execution_client_id
+       WHERE ${MY_FILES.replaceAll('$u', '?')} AND a.kind IN ('foto', 'foto_metodo') AND a.replaced = 0
+         AND a.lat IS NOT NULL AND a.lng IS NOT NULL
+       ORDER BY a.taken_at DESC LIMIT 2000`,
+      userId, userId, userId, userId);
+  }, [userId]);
+
   const addAttachment = useCallback<Ctx['addAttachment']>(async (a, replaceSlot) => {
     const db = await getDb();
     if (replaceSlot && a.kind !== 'audio' && a.slotKey) {
@@ -664,7 +687,7 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
       value={{
         byUnit, executions, incidents, unreadIncidents, brigadeIncidents, unreadBrigadeIncidents, logistics, inquiries, unreadInquiries,
         rev, pending, syncing, sendInquiryReply, markInquirySeen,
-        lastSyncAt, lastSyncError, lastReport, start, update, attachmentsOf, addAttachment, removeAttachment, saveIncident,
+        lastSyncAt, lastSyncError, lastReport, start, update, attachmentsOf, myPhotos, addAttachment, removeAttachment, saveIncident,
         sendIncidentMessage, addCoordination, markIncidentSeen, markBrigadeIncidentSeen, saveLogistics, retentionCandidates, freeUploadedFiles, syncNow,
       }}
     >

@@ -44,7 +44,7 @@ const messagesOf = async (incidentIds: string[]) => {
   if (!incidentIds.length) return [] as (IncidentMessageDto & { incidentId: string })[];
   return (await db.execute(sql`
     SELECT m.id, m.client_id AS "clientId", m.incident_id AS "incidentId", m.author_id AS "authorId", u.full_name AS "authorName",
-      m.body, m.kind, m.sent_at AS "sentAt"
+      m.body, m.kind, ${iso(sql`m.sent_at`)} AS "sentAt"
     FROM incident_messages m JOIN users u ON u.id = m.author_id
     WHERE m.incident_id IN (${sql.join(incidentIds.map((i) => sql`${i}`), sql`, `)})
     ORDER BY m.sent_at, m.created_at`)).rows as (IncidentMessageDto & { incidentId: string })[];
@@ -178,7 +178,7 @@ const incidentRoutes: FastifyPluginAsync = async (app) => {
     const rows = (await db.execute(sql`
       SELECT i.id, i.client_id AS "clientId", i.status, i.coordination_decision AS "coordinationDecision",
         i.coordination_response AS "coordinationResponse", i.corrective_action AS "correctiveAction",
-        i.resolved_at AS "resolvedAt", u.full_name AS "resolvedByName", i.updated_at AS "updatedAt"
+        ${iso(sql`i.resolved_at`)} AS "resolvedAt", u.full_name AS "resolvedByName", ${iso(sql`i.updated_at`)} AS "updatedAt"
       FROM incidents i LEFT JOIN users u ON u.id = i.resolved_by_id
       WHERE i.reported_by_id = ${req.user.sub} AND i.created_at > now() - interval '90 days'
       ORDER BY i.occurred_at DESC`)).rows as Omit<MyIncidentDto, 'messages' | 'reschedules' | 'coordinations'>[];
@@ -197,9 +197,9 @@ const incidentRoutes: FastifyPluginAsync = async (app) => {
     const rows = (await db.execute(sql`
       SELECT i.id, i.client_id AS "clientId", i.status, i.coordination_decision AS "coordinationDecision",
         i.coordination_response AS "coordinationResponse", i.corrective_action AS "correctiveAction",
-        i.resolved_at AS "resolvedAt", rv.full_name AS "resolvedByName", i.updated_at AS "updatedAt",
+        ${iso(sql`i.resolved_at`)} AS "resolvedAt", rv.full_name AS "resolvedByName", ${iso(sql`i.updated_at`)} AS "updatedAt",
         i.type, i.moment, i.launched_from AS "launchedFrom", i.description, i.proposed_action AS "proposedAction",
-        i.methodological_deviation AS "methodologicalDeviation", i.resolution_notes AS "resolutionNotes", i.occurred_at AS "occurredAt",
+        i.methodological_deviation AS "methodologicalDeviation", i.resolution_notes AS "resolutionNotes", ${iso(sql`i.occurred_at`)} AS "occurredAt",
         i.reported_by_id AS "reportedById", ru.full_name AS "reportedByName", i.brigade_id AS "brigadeId", i.station_id AS "stationId",
         s.code AS "stationCode", su.code AS "unitCode", m.code AS "methodCode",
         (SELECT count(*)::int FROM attachments a WHERE a.owner_type = 'incident' AND a.owner_id = i.id) AS files

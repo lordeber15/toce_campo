@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import type { FeatureCollection, Geometry } from 'geojson';
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router';
 import {
@@ -8,6 +9,7 @@ import {
 } from '@toce/shared';
 import { api, download } from '../lib/api';
 import { MediaViewer } from '../components/MediaViewer';
+import { MapView } from '../components/MapView';
 import { useAuth } from '../lib/auth';
 import { useProject } from '../lib/project';
 import { ErrorBox, NoProject } from '../components/Dialog';
@@ -278,6 +280,8 @@ export function RecordDetailPage({ mine = false }: { mine?: boolean }) {
         </div>
       </div>
 
+      <UnitMap d={d} label={slotLabel} />
+
       {d.observations && (
         <div className="card" style={{ padding: 18, marginBottom: 16 }}>
           <div className="section-title" style={{ marginTop: 0 }}>Observaciones</div>
@@ -383,6 +387,7 @@ function Photo({ file, label }: { file: RecordAttachment; label: string }) {
       ) : <div className="card" style={box} />}
       <figcaption style={{ fontSize: 13, marginTop: 4 }}>
         <strong>{label}</strong> <span className="hint">{hour(file.takenAt)}</span>
+        {file.outsideArea && <div><span className="chip chip-warn" style={{ background: '#FFE3E3', color: '#C92A2A' }}>Fuera del polígono</span></div>}
         {file.lat != null && file.lng != null && <div className="hint">{utm(file.lat, file.lng)}{file.accuracy != null ? ` ±${Math.round(file.accuracy)} m` : ''}</div>}
         {file.caption && <div>{file.caption}</div>}
       </figcaption>
@@ -398,6 +403,32 @@ function Photo({ file, label }: { file: RecordAttachment; label: string }) {
         />
       )}
     </figure>
+  );
+}
+
+/** Mapa de la unidad: estación, polígono de la brigada y dónde se tomó cada foto. */
+function UnitMap({ d, label }: { d: RecordDetail; label: (a: RecordAttachment) => string }) {
+  const photos = d.attachments.filter((a) => (a.kind === 'foto' || a.kind === 'foto_metodo') && a.lat != null && a.lng != null);
+  const areas = useMemo<FeatureCollection | null>(
+    () => (d.brigadeArea ? { type: 'FeatureCollection', features: [{ type: 'Feature', id: 'area', geometry: d.brigadeArea.geometry as Geometry, properties: { name: d.brigadeName, areaName: d.brigadeArea.name } }] } : null),
+    [d.brigadeArea, d.brigadeName],
+  );
+  if (!photos.length && !areas) return null;
+  const outside = photos.filter((a) => a.outsideArea).length;
+  return (
+    <div className="card" style={{ padding: 18, marginBottom: 16 }}>
+      <div className="section-title" style={{ marginTop: 0 }}>
+        Dónde se tomaron las fotos
+        {outside > 0 && <span className="chip chip-warn" style={{ marginLeft: 8, background: '#FFE3E3', color: '#C92A2A' }}>{outside} fuera del polígono</span>}
+        {!areas && <span className="hint" style={{ marginLeft: 8, fontWeight: 400 }}>La brigada no tiene polígono de trabajo.</span>}
+      </div>
+      <MapView
+        areas={areas}
+        stations={[{ id: d.stationId, code: d.stationCode, lat: d.station.lat, lng: d.station.lng }]}
+        photos={photos.map((a) => ({ id: a.id, lat: a.lat!, lng: a.lng!, outside: a.outsideArea, label: `${label(a)} · ${hour(a.takenAt)}` }))}
+        height={340}
+      />
+    </div>
   );
 }
 

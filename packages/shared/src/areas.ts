@@ -72,3 +72,45 @@ export function classifyPoint(layers: WpLayer[], lat: number, lng: number): Poin
     inFootprint: hit('huella').length > 0,
   };
 }
+
+/** Distancia en metros de un punto al borde más cercano de un polígono (aprox. equirectangular). */
+export function distanceToGeometryM(lng: number, lat: number, g: WpGeometry): number {
+  const kx = 111320 * Math.cos((lat * Math.PI) / 180);
+  const ky = 110540;
+  let best = Infinity;
+  const ring = (r: Ring) => {
+    for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+      const ax = (r[j]![0] - lng) * kx, ay = (r[j]![1] - lat) * ky;
+      const bx = (r[i]![0] - lng) * kx, by = (r[i]![1] - lat) * ky;
+      const dx = bx - ax, dy = by - ay;
+      const len = dx * dx + dy * dy;
+      const t = len ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / len)) : 0;
+      best = Math.min(best, Math.hypot(ax + t * dx, ay + t * dy));
+    }
+  };
+  const walk = (x: WpGeometry) => {
+    if (x.type === 'Polygon') (x.coordinates as Ring[]).forEach(ring);
+    else if (x.type === 'MultiPolygon') (x.coordinates as Ring[][]).forEach((p) => p.forEach(ring));
+    else if (x.type === 'GeometryCollection') x.geometries.forEach(walk);
+  };
+  walk(g);
+  return best;
+}
+
+export type AreaCheck =
+  | { status: 'sin_area' }
+  | { status: 'sin_gps'; areaName: string }
+  | { status: 'dentro'; areaName: string }
+  | { status: 'fuera'; areaName: string; distanceM: number };
+
+/** ¿El punto cae dentro del polígono asignado a la brigada? (misma regla que el servidor: ST_Intersects). */
+export function checkBrigadeArea(
+  brigade: { area: WpGeometry | null; areaName: string | null; name: string } | null | undefined,
+  pos: { lat: number; lng: number } | null | undefined,
+): AreaCheck {
+  if (!brigade?.area) return { status: 'sin_area' };
+  const areaName = brigade.areaName || `Polígono de ${brigade.name}`;
+  if (!pos) return { status: 'sin_gps', areaName };
+  if (pointInGeometry(pos.lng, pos.lat, brigade.area)) return { status: 'dentro', areaName };
+  return { status: 'fuera', areaName, distanceM: distanceToGeometryM(pos.lng, pos.lat, brigade.area) };
+}

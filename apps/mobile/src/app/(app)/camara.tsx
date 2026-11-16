@@ -4,9 +4,10 @@ import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Crypto from 'expo-crypto';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { INCIDENT_TYPE_LABELS, LOGISTICS_ENTITY_LABELS, formatUtm, latLngToUtm } from '@toce/shared';
+import { INCIDENT_TYPE_LABELS, LOGISTICS_ENTITY_LABELS, checkBrigadeArea, formatUtm, latLngToUtm, type AreaCheck } from '@toce/shared';
+import { File } from 'expo-file-system';
 import { useField } from '../../lib/field';
-import { usePosition } from '../../lib/location';
+import { formatDistance, usePosition } from '../../lib/location';
 import { processPhoto } from '../../lib/photo';
 import { usePackageIndex } from '../../lib/workPackage';
 import { colors } from '../../theme';
@@ -43,6 +44,10 @@ export default function CameraScreen() {
     ? `${LOGISTICS_ENTITY_LABELS[logRecord.entity].one} · ${logData?.plate ?? logData?.code ?? logData?.fullName ?? logData?.name ?? logData?.description ?? ''}`
     : '';
   const title = ownerLabel || logLabel || (inquiry ? `Consulta · ${inquiry.subject}` : '');
+  // Polígono de trabajo de la brigada: solo se verifican las fotos de campo (no los comprobantes).
+  const brigadeId = execution?.brigadeId ?? incident?.brigadeId ?? logRecord?.brigadeId ?? null;
+  const brigade = brigadeId ? index?.brigades.get(brigadeId) : undefined;
+  const checksArea = kind !== 'comprobante' && !!brigade?.area;
 
   // La primera vez pide el permiso directamente.
   useEffect(() => {
@@ -63,6 +68,7 @@ export default function CameraScreen() {
   }
 
   const p = pos.status === 'ok' ? pos.position : null;
+  const area: AreaCheck = checksArea ? checkBrigadeArea(brigade, p) : { status: 'sin_area' };
 
   const shoot = async () => {
     if (!cam.current || busy || (!execution && !incident && !logRecord && !inquiry)) return;
@@ -75,6 +81,16 @@ export default function CameraScreen() {
         shutterSound: true,
         additionalExif: p ? { GPSLatitude: Math.abs(p.lat), GPSLatitudeRef: p.lat < 0 ? 'S' : 'N', GPSLongitude: Math.abs(p.lng), GPSLongitudeRef: p.lng < 0 ? 'W' : 'E' } : undefined,
       });
+      // Fuera del polígono de la brigada (o sin GPS para verificarlo): se advierte antes de guardar.
+      const at = checksArea ? checkBrigadeArea(brigade, p) : { status: 'sin_area' as const };
+      if (at.status === 'fuera' || at.status === 'sin_gps') {
+        const keep = await confirmOutside(at);
+        if (!keep) {
+          try { new File(pic.uri).delete(); } catch { /* temporal de la cámara */ }
+          setBusy(false);
+          return;
+        }
+      }
       const clientId = Crypto.randomUUID();
       const when = takenAt.toLocaleString('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
       const where = [project?.name, station?.name ?? station?.code, station?.vegetationUnit].filter(Boolean).join(' · ');
@@ -124,6 +140,7 @@ export default function CameraScreen() {
       </View>
 
       <View style={[s.bottom, { paddingBottom: insets.bottom + 20 }]}>
+        {area.status !== 'sin_area' && <AreaBadge area={area} />}
         <Text style={s.gps}>
           {pos.status === 'denied'
             ? 'Sin permiso de ubicación: la foto no tendrá coordenadas'
@@ -146,7 +163,42 @@ export default function CameraScreen() {
   );
 }
 
+const dist = (m: number) => (m < 10 ? 'menos de 10 m' : formatDistance(m));
+
+/** Pregunta si guardar una foto fuera del polígono de la brigada. true = guardar igual. */
+function confirmOutside(at: Extract<AreaCheck, { status: 'fuera' | 'sin_gps' }>): Promise<boolean> {
+  return new Promise((resolve) => {
+    Alert.alert(
+      at.status === 'fuera' ? 'Foto fuera del polígono' : 'Sin ubicación GPS',
+      at.status === 'fuera'
+        ? `Estás a ${dist(at.distanceM)} fuera de ${at.areaName}, el polígono asignado a tu brigada.\n\nSi la guardas, quedará marcada como "fuera del polígono" para el supervisor.`
+        : `No hay GPS, así que no se puede verificar si estás dentro de ${at.areaName}.\n\nSi la guardas, quedará sin verificar.`,
+      [
+        { text: 'Volver a tomar', style: 'cancel', onPress: () => resolve(false) },
+        { text: 'Guardar igual', style: 'destructive', onPress: () => resolve(true) },
+      ],
+      { cancelable: true, onDismiss: () => resolve(false) },
+    );
+  });
+}
+
+/** Aviso en vivo: dentro o fuera del polígono de la brigada. */
+function AreaBadge({ area }: { area: AreaCheck }) {
+  if (area.status === 'sin_area') return null;
+  const tone = area.status === 'dentro' ? '#2F9E44' : area.status === 'fuera' ? '#E03131' : '#868E96';
+  const text = area.status === 'dentro'
+    ? `Dentro de ${area.areaName}`
+    : area.status === 'fuera' ? `Fuera de ${area.areaName} · a ${dist(area.distanceM)}` : `Sin GPS para verificar ${area.areaName}`;
+  return (
+    <View style={[s.badge, { backgroundColor: tone }]} accessibilityLiveRegion="polite">
+      <Text style={s.badgeText} numberOfLines={1}>{text}</Text>
+    </View>
+  );
+}
+
 const s = StyleSheet.create({
+  badge: { borderRadius: 16, paddingHorizontal: 14, paddingVertical: 6, maxWidth: '92%' },
+  badgeText: { color: '#fff', fontSize: 14, fontWeight: '700' },
   black: { flex: 1, backgroundColor: '#000' },
   center: { alignItems: 'center', justifyContent: 'center', gap: 16 },
   permText: { color: '#fff', textAlign: 'center', fontSize: 16, lineHeight: 22 },

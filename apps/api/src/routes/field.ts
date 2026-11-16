@@ -10,6 +10,7 @@ import {
 import { db } from '../db/index.js';
 import { HttpError, badRequest, conflict, idParam, notFound } from '../lib/http.js';
 import { LOGISTICS_TABLES } from './logistics.js';
+import { classifyPhotos } from '../lib/geo.js';
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -219,6 +220,8 @@ const fieldRoutes: FastifyPluginAsync = async (app) => {
         | Omit<AttachmentMetaResult, 'clientId'>
         | undefined;
       if (!row) throw conflict('Archivo registrado en paralelo; reintenta');
+      // Dentro o fuera del polígono de la brigada (lo decide el servidor, no el teléfono).
+      if (a.kind === 'foto' || a.kind === 'foto_metodo') await classifyPhotos(db, sql`a.id = ${row.id}`);
       if (ex.type === 'inquiry_message') await db.execute(sql`UPDATE inquiries SET updated_at = now() WHERE id = ${ex.folder!}::uuid`);
       return { ...row, clientId: a.clientId };
     },

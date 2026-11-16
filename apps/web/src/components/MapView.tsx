@@ -14,9 +14,19 @@ export const KIND_STYLE: Record<string, { color: string; fill: number; label: st
 };
 
 export type MapStation = { id: string; code: string; lat: number; lng: number; color?: string; selected?: boolean };
+/** Foto ubicada: verde dentro del polígono de la brigada, rojo fuera, gris si no se pudo verificar. */
+export type MapPhoto = { id: string; lat: number; lng: number; outside: boolean | null; label: string; selected?: boolean };
+
+export const PHOTO_COLORS = { inside: '#2F9E44', outside: '#E03131', unknown: '#868E96' };
+export const BRIGADE_AREA_COLOR = '#F76707';
+const photoColor = (o: boolean | null) => (o === true ? PHOTO_COLORS.outside : o === false ? PHOTO_COLORS.inside : PHOTO_COLORS.unknown);
 
 type Props = {
   layers?: FeatureCollection | null;
+  /** Polígonos de trabajo de las brigadas (properties.name / areaName). */
+  areas?: FeatureCollection | null;
+  photos?: MapPhoto[];
+  onPhotoClick?: (id: string) => void;
   stations?: MapStation[];
   onStationClick?: (id: string) => void;
   onMapClick?: (lat: number, lng: number) => void;
@@ -25,12 +35,14 @@ type Props = {
   fitKey?: string; // cambia para volver a encuadrar
 };
 
-function FitBounds({ layers, stations, fitKey }: Pick<Props, 'layers' | 'stations' | 'fitKey'>) {
+function FitBounds({ layers, areas, stations, photos, fitKey }: Pick<Props, 'layers' | 'areas' | 'stations' | 'photos' | 'fitKey'>) {
   const map = useMap();
   useEffect(() => {
     const b = L.latLngBounds([]);
     if (layers?.features.length) b.extend(L.geoJSON(layers).getBounds());
+    if (areas?.features.length) b.extend(L.geoJSON(areas).getBounds());
     stations?.forEach((s) => b.extend([s.lat, s.lng]));
+    photos?.forEach((p) => b.extend([p.lat, p.lng]));
     if (b.isValid()) map.fitBounds(b as LatLngBoundsExpression, { padding: [24, 24], maxZoom: 15 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitKey, map]);
@@ -42,8 +54,9 @@ function ClickHandler({ onMapClick }: { onMapClick?: (lat: number, lng: number) 
   return null;
 }
 
-export function MapView({ layers, stations = [], onStationClick, onMapClick, pick, height = 480, fitKey }: Props) {
+export function MapView({ layers, areas, photos = [], onPhotoClick, stations = [], onStationClick, onMapClick, pick, height = 480, fitKey }: Props) {
   const layerKey = useMemo(() => (layers ? layers.features.map((f) => f.id).join(',') : ''), [layers]);
+  const areaKey = useMemo(() => (areas ? areas.features.map((f) => f.id).join(',') : ''), [areas]);
   return (
     <MapContainer center={[-9.19, -75.0]} zoom={5} style={{ height, width: '100%', borderRadius: 10 }} scrollWheelZoom>
       <LayersControl position="topright">
@@ -68,6 +81,17 @@ export function MapView({ layers, stations = [], onStationClick, onMapClick, pic
           }}
         />
       )}
+      {areas && (
+        <GeoJSON
+          key={`areas-${areaKey}`}
+          data={areas}
+          style={() => ({ color: BRIGADE_AREA_COLOR, weight: 3, dashArray: '8 6', fillColor: BRIGADE_AREA_COLOR, fillOpacity: 0.07 })}
+          onEachFeature={(f, l) => {
+            const p = f.properties as { name?: string; areaName?: string | null; areaHa?: number };
+            l.bindTooltip(`Polígono de ${p.name ?? 'brigada'}${p.areaName ? `: ${p.areaName}` : ''}${p.areaHa ? ` · ${p.areaHa.toLocaleString('es-PE')} ha` : ''}`, { sticky: true });
+          }}
+        />
+      )}
       {stations.map((s) => (
         <CircleMarker
           key={s.id}
@@ -81,9 +105,20 @@ export function MapView({ layers, stations = [], onStationClick, onMapClick, pic
           </Tooltip>
         </CircleMarker>
       ))}
+      {photos.map((p) => (
+        <CircleMarker
+          key={p.id}
+          center={[p.lat, p.lng]}
+          radius={p.selected ? 9 : 6}
+          pathOptions={{ color: p.selected ? '#111' : '#fff', weight: 2, fillColor: photoColor(p.outside), fillOpacity: 0.95 }}
+          eventHandlers={{ click: () => onPhotoClick?.(p.id) }}
+        >
+          <Tooltip direction="top" offset={[0, -6]}>{p.label}</Tooltip>
+        </CircleMarker>
+      ))}
       {pick && <CircleMarker center={[pick.lat, pick.lng]} radius={8} pathOptions={{ color: '#E03131', weight: 3, fillOpacity: 0.3 }} />}
       <ClickHandler onMapClick={onMapClick} />
-      <FitBounds layers={layers} stations={stations} fitKey={fitKey ?? `${layerKey}|${stations.length}`} />
+      <FitBounds layers={layers} areas={areas} stations={stations} photos={photos} fitKey={fitKey ?? `${layerKey}|${areaKey}|${stations.length}|${photos.length}`} />
     </MapContainer>
   );
 }
