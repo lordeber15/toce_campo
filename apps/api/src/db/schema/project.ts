@@ -1,5 +1,6 @@
+import { sql } from 'drizzle-orm';
 import {
-  pgTable, text, boolean, uuid, integer, date, timestamp, jsonb, index, uniqueIndex, pgEnum, time,
+  pgTable, text, boolean, uuid, integer, date, timestamp, jsonb, index, uniqueIndex, pgEnum, time, type AnyPgColumn,
 } from 'drizzle-orm/pg-core';
 import type { FormSchema, PhotoSlot } from '@toce/shared';
 import { id, createdAt, updatedAt, deletedAt, pointGeom, anyGeom } from './_common.js';
@@ -42,10 +43,22 @@ export const projectLayers = pgTable(
     geom: anyGeom('geom').notNull(),
     properties: jsonb('properties').$type<Record<string, unknown>>(),
     sourceFile: text('source_file'),
+    /** Título del documento KML: raíz del árbol de capas. */
+    sourceTitle: text('source_title'),
+    /** Carpetas del KMZ, de la raíz a la hoja. */
+    folderPath: text('folder_path').array().notNull().default(sql`'{}'::text[]`),
+    /** Orden dentro del archivo (para mostrar las carpetas como en el KMZ). */
+    sortOrder: integer('sort_order').notNull().default(0),
+    /** Brigada dueña del KMZ: el teléfono solo recibe las de sus brigadas (null = todo el proyecto). */
+    brigadeId: uuid('brigade_id').references((): AnyPgColumn => brigades.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index('project_layers_project_idx').on(t.projectId), index('project_layers_geom_idx').using('gist', t.geom)],
+  (t) => [
+    index('project_layers_project_idx').on(t.projectId),
+    index('project_layers_source_idx').on(t.projectId, t.sourceFile),
+    index('project_layers_geom_idx').using('gist', t.geom),
+  ],
 );
 
 export const brigades = pgTable(

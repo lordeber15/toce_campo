@@ -6,6 +6,10 @@ export type LayerKind = 'huella' | 'aid' | 'aii' | 'uv' | 'superposicion' | 'otr
 export type ParsedFeature = {
   name: string;
   folder: string;
+  /** Carpetas de la raíz a la hoja. */
+  folderPath: string[];
+  /** Color del estilo del KMZ (#rrggbb) si lo trae. */
+  color: string | null;
   geometry: Geometry;
   properties: Record<string, unknown>;
   kind: LayerKind;
@@ -36,24 +40,51 @@ function compact(g: Geometry): Geometry {
   return { ...g, coordinates: compactCoords(g.coordinates) } as Geometry;
 }
 
+/**
+ * Tipo sugerido mirando primero lo más específico (el nombre, luego la carpeta más profunda):
+ * así "Áreas de influencia y huella / AID" queda como AID y no como huella.
+ */
+function guessKindFrom(name: string, path: string[]): LayerKind {
+  for (const t of [name, ...[...path].reverse()]) {
+    const k = guessKind(t);
+    if (k !== 'otro') return k;
+  }
+  return 'otro';
+}
+
+/** Claves internas de togeojson que no aportan al usuario. */
+const NOISE = new Set(['styleUrl', 'styleHash', 'styleMap', 'visibility']);
+
 function walk(node: Root | Folder, path: string[], out: ParsedFeature[]) {
   for (const child of node.children) {
     if (child.type === 'folder') {
-      walk(child, [...path, String(child.meta?.name ?? '')].filter(Boolean), out);
+      walk(child, [...path, String(child.meta?.name ?? '').trim()].filter(Boolean), out);
       continue;
     }
     const f = child as Feature;
     if (!f.geometry) continue;
-    const props = (f.properties ?? {}) as Record<string, unknown>;
-    const name = String(props.name ?? '').trim() || '(sin nombre)';
-    const folder = path.join(' / ');
+    const raw = (f.properties ?? {}) as Record<string, unknown>;
+    const props = Object.fromEntries(Object.entries(raw).filter(([k, v]) => !NOISE.has(k) && v !== '' && v != null));
+    const name = String(raw.name ?? '').trim() || '(sin nombre)';
     const isPoint = f.geometry.type === 'Point' || f.geometry.type === 'MultiPoint';
-    out.push({ name, folder, geometry: compact(f.geometry), properties: props, kind: guessKind(`${folder} ${name}`), isPoint });
+    // Color del estilo del KMZ (togeojson lo entrega como #rrggbb).
+    const color = [raw.fill, raw.stroke, raw['marker-color']].find((c): c is string => typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c)) ?? null;
+    out.push({
+      name, folder: path.join(' / '), folderPath: path, geometry: compact(f.geometry), properties: props,
+      kind: guessKindFrom(name, path), isPoint, color,
+    });
   }
 }
 
+export type ParsedKml = { title: string | null; features: ParsedFeature[] };
+
 /** Lee un .kmz o .kml y devuelve sus elementos con el tipo sugerido. */
 export async function parseKmlFile(file: File): Promise<ParsedFeature[]> {
+  return (await parseKmlDocument(file)).features;
+}
+
+/** Igual que parseKmlFile, más el nombre del documento (raíz del árbol de capas). */
+export async function parseKmlDocument(file: File): Promise<ParsedKml> {
   let text: string;
   if (/\.kmz$/i.test(file.name)) {
     const zip = await JSZip.loadAsync(file);
@@ -68,7 +99,9 @@ export async function parseKmlFile(file: File): Promise<ParsedFeature[]> {
   const out: ParsedFeature[] = [];
   walk(kmlWithFolders(dom), [], out);
   if (!out.length) throw new Error('No se encontraron elementos con geometría');
-  return out;
+  const doc = Array.from(dom.getElementsByTagName('Document'))[0];
+  const nameEl = doc ? Array.from(doc.childNodes).find((c) => c.nodeType === 1 && (c as Element).localName === 'name') : undefined;
+  return { title: nameEl?.textContent?.trim() || null, features: out };
 }
 
 /** Extrae un código de estación tipo "EM-23", "EM23", "EM 35A" desde un nombre. */

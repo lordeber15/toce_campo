@@ -128,7 +128,7 @@ export function Layout() {
   return (
     <div className={'shell' + (menuOpen ? ' menu-open' : '')}>
       <header className="topbar">
-        <button type="button" className="icon-btn" onClick={() => setMenuOpen(true)} aria-label="Abrir menú" aria-expanded={menuOpen} aria-controls="sidebar">
+        <button type="button" className="menu-btn" onClick={() => setMenuOpen(true)} aria-label="Abrir menú" aria-expanded={menuOpen} aria-controls="sidebar">
           <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
         </button>
         <div className="brand"><span className="brand-mark"><LeafIcon /></span>TOCE</div>
@@ -137,7 +137,7 @@ export function Layout() {
       <aside className="sidebar" id="sidebar">
         <div className="sidebar-head">
           <div className="brand"><span className="brand-mark"><LeafIcon /></span>TOCE</div>
-          <button type="button" className="icon-btn sidebar-close" onClick={() => setMenuOpen(false)} aria-label="Cerrar menú">
+          <button type="button" className="menu-btn sidebar-close" onClick={() => setMenuOpen(false)} aria-label="Cerrar menú">
             <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
           </button>
         </div>

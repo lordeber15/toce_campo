@@ -122,6 +122,10 @@ export const LAYER_KIND_LABELS: Record<(typeof LAYER_KINDS)[number], string> = {
 
 export const layersImportSchema = z.object({
   sourceFile: z.string().trim().max(200).optional(),
+  /** Nombre del documento KML ("TOCE – Brigada Costa 1"): raíz del árbol de capas. */
+  sourceTitle: z.string().trim().max(200).nullish(),
+  /** Brigada dueña del KMZ: en el teléfono solo lo reciben sus integrantes. Sin brigada = todo el proyecto. */
+  brigadeId: z.string().uuid().nullish(),
   /** Reemplaza las capas importadas antes desde un archivo con el mismo nombre. */
   replaceSameSource: z.boolean().default(true),
   features: z
@@ -131,13 +135,40 @@ export const layersImportSchema = z.object({
         name: z.string().trim().min(1).max(200),
         code: z.string().trim().max(40).nullish(),
         color: z.string().max(20).nullish(),
-        geometry: z.object({ type: z.string(), coordinates: z.unknown() }).passthrough(),
+        /** Carpetas del KMZ, de la raíz a la hoja: ["Componentes proyectados", "Principales", "Torres (147)"]. */
+        folderPath: z.array(z.string().max(200)).max(12).default([]),
+        geometry: z.object({ type: z.string() }).passthrough(),
         properties: z.record(z.string(), z.unknown()).nullish(),
       }),
     )
     .min(1)
-    .max(5000),
+    .max(20000),
 });
+
+/** Cambios por grupo del árbol de capas: un KMZ entero o una carpeta (y todo lo que tiene dentro). */
+export const layerGroupSchema = z.object({
+  sourceFile: z.string().max(200).nullable(),
+  folderPath: z.array(z.string().max(200)).max(12).default([]),
+});
+export const layerGroupUpdateSchema = layerGroupSchema.extend({
+  kind: z.enum(LAYER_KINDS).optional(),
+  brigadeId: z.string().uuid().nullish(),
+});
+
+/** Un nodo hoja del árbol de capas (una carpeta con elementos). */
+export type LayerTreeLeaf = {
+  sourceFile: string | null;
+  sourceTitle: string | null;
+  brigadeId: string | null;
+  brigadeName: string | null;
+  folderPath: string[];
+  kind: (typeof LAYER_KINDS)[number];
+  count: number;
+  points: number;
+  lines: number;
+  polygons: number;
+  color: string | null;
+};
 
 /** Código de unidad: EM-23 + PC + 01 -> EM-23-PC01 */
 export function unitCode(stationCode: string, methodCode: string, seq: number): string {

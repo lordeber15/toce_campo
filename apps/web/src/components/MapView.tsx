@@ -58,7 +58,7 @@ export function MapView({ layers, areas, photos = [], onPhotoClick, stations = [
   const layerKey = useMemo(() => (layers ? layers.features.map((f) => f.id).join(',') : ''), [layers]);
   const areaKey = useMemo(() => (areas ? areas.features.map((f) => f.id).join(',') : ''), [areas]);
   return (
-    <MapContainer center={[-9.19, -75.0]} zoom={5} style={{ height, width: '100%', borderRadius: 10 }} scrollWheelZoom>
+    <MapContainer center={[-9.19, -75.0]} zoom={5} style={{ height, width: '100%', borderRadius: 10 }} scrollWheelZoom preferCanvas>
       <LayersControl position="topright">
         <LayersControl.BaseLayer checked name="OpenStreetMap">
           <TileLayer attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxZoom={19} />
@@ -73,11 +73,23 @@ export function MapView({ layers, areas, photos = [], onPhotoClick, stations = [
           data={layers}
           style={(f) => {
             const st = KIND_STYLE[String(f?.properties?.kind)] ?? KIND_STYLE.otro!;
-            return { color: f?.properties?.color || st.color, weight: 2, fillOpacity: st.fill };
+            const color = f?.properties?.color || st.color;
+            // El relleno del KMZ (si lo trae) se respeta, pero sin tapar el mapa base.
+            const kmzFill = Number((f?.properties?.properties as Record<string, unknown> | undefined)?.['fill-opacity']);
+            const fill = Number.isFinite(kmzFill) && kmzFill > 0 ? Math.min(kmzFill, 0.35) : st.fill;
+            return { color, weight: 1.5, fillColor: color, fillOpacity: fill };
+          }}
+          pointToLayer={(f, latlng) => {
+            const color = f.properties?.color || KIND_STYLE[String(f.properties?.kind)]?.color || KIND_STYLE.otro!.color;
+            return L.circleMarker(latlng, { radius: 5, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: 1 });
           }}
           onEachFeature={(f, l) => {
-            const p = f.properties as { name?: string; kind?: string; areaHa?: number };
-            l.bindTooltip(`${KIND_STYLE[p.kind ?? 'otro']?.label ?? ''}: ${p.name ?? ''}${p.areaHa ? ` · ${p.areaHa.toLocaleString('es-PE')} ha` : ''}`, { sticky: true });
+            const p = f.properties as { name?: string; kind?: string; areaHa?: number; folderPath?: string[] };
+            const folder = p.folderPath?.length ? p.folderPath[p.folderPath.length - 1] : KIND_STYLE[p.kind ?? 'otro']?.label;
+            const label = `${folder && folder !== p.name ? `${folder}: ` : ''}${p.name ?? ''}${p.areaHa ? ` · ${p.areaHa.toLocaleString('es-PE')} ha` : ''}`;
+            const tip = document.createElement('span');
+            tip.textContent = label; // texto del KMZ: sin interpretar HTML
+            l.bindTooltip(tip, { sticky: true });
           }}
         />
       )}

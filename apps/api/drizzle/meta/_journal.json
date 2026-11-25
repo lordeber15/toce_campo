@@ -85,6 +85,13 @@
       "when": 1794799606750,
       "tag": "0011_brigade_area",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1795572938167,
+      "tag": "0012_layer_tree",
+      "breakpoints": true
     }
   ]
 }

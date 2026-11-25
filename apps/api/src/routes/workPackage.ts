@@ -179,11 +179,13 @@ const workPackageRoutes: FastifyPluginAsync = async (app) => {
         : [];
 
       // Capas KMZ simplificadas (~2 m) para dibujarlas y verificar el área de influencia sin conexión.
+      // Cada brigadista recibe solo los KMZ de sus brigadas (y los que no tienen brigada: de todo el proyecto).
       const layers: WpLayer[] = projectIds.length
         ? ((await db.execute(sql`
             SELECT id, project_id AS "projectId", kind, name, code, color,
               ST_AsGeoJSON(ST_SimplifyPreserveTopology(geom, 0.00002), 6)::json AS geometry
             FROM project_layers WHERE project_id IN (${list(projectIds)})
+              AND (brigade_id IS NULL ${brigadeIds.length ? sql`OR brigade_id IN (${list(brigadeIds)})` : sql``})
             ORDER BY CASE kind WHEN 'uv' THEN 1 WHEN 'aii' THEN 2 WHEN 'aid' THEN 3 WHEN 'superposicion' THEN 4 WHEN 'huella' THEN 5 ELSE 6 END, name`)).rows as WpLayer[])
         : [];
 
