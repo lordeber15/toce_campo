@@ -75,7 +75,8 @@ const projectsRoutes: FastifyPluginAsync = async (app) => {
     },
   );
 
-  r.post('/projects/:id/layers', { onRequest: write, schema: { params: idParam, body: layersImportSchema } }, async (req, reply) => {
+  // Capas KMZ grandes (miles de polígonos) superan el límite general de 20 MB.
+  r.post('/projects/:id/layers', { onRequest: write, bodyLimit: 100 * 1024 * 1024, schema: { params: idParam, body: layersImportSchema } }, async (req, reply) => {
     const projectId = req.params.id;
     const [p] = await app.db.select({ id: projects.id }).from(projects).where(eq(projects.id, projectId));
     if (!p) throw notFound('Proyecto');

@@ -23,6 +23,19 @@ export function guessKind(text: string): LayerKind {
   return 'otro';
 }
 
+/**
+ * Quita la altitud (la API la descarta con ST_Force2D) y redondea a 7 decimales (~1 cm).
+ * Un KMZ de pocos MB se expande a decenas de MB de JSON sin esto.
+ */
+function compactCoords(c: unknown): unknown {
+  if (Array.isArray(c) && typeof c[0] === 'number') return [Math.round(c[0] * 1e7) / 1e7, Math.round((c[1] as number) * 1e7) / 1e7];
+  return Array.isArray(c) ? c.map(compactCoords) : c;
+}
+function compact(g: Geometry): Geometry {
+  if (g.type === 'GeometryCollection') return { ...g, geometries: g.geometries.map(compact) };
+  return { ...g, coordinates: compactCoords(g.coordinates) } as Geometry;
+}
+
 function walk(node: Root | Folder, path: string[], out: ParsedFeature[]) {
   for (const child of node.children) {
     if (child.type === 'folder') {
@@ -35,7 +48,7 @@ function walk(node: Root | Folder, path: string[], out: ParsedFeature[]) {
     const name = String(props.name ?? '').trim() || '(sin nombre)';
     const folder = path.join(' / ');
     const isPoint = f.geometry.type === 'Point' || f.geometry.type === 'MultiPoint';
-    out.push({ name, folder, geometry: f.geometry, properties: props, kind: guessKind(`${folder} ${name}`), isPoint });
+    out.push({ name, folder, geometry: compact(f.geometry), properties: props, kind: guessKind(`${folder} ${name}`), isPoint });
   }
 }
 
