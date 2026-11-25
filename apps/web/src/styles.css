@@ -76,13 +76,26 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .main { padding: 28px 32px; min-width: 0; }
 .page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
 .page-head p { color: var(--text-2); margin: 4px 0 0; }
+/* Barra superior con botón de menú: solo en pantallas angostas. */
+.topbar, .nav-backdrop, .sidebar-close { display: none; }
+.icon-btn { width: 40px; height: 40px; display: grid; place-items: center; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; }
+.icon-btn:hover { background: var(--surface-2); }
+.icon-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 @media (max-width: 860px) {
   .shell { grid-template-columns: 1fr; }
-  .sidebar { flex-direction: row; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--border); padding: 8px 16px; align-items: center; }
-  .sidebar .brand, .sidebar-foot .me { display: none; }
-  .sidebar-foot { margin: 0 0 0 auto; border: 0; padding: 0; }
+  .topbar { display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 30; background: var(--surface); border-bottom: 1px solid var(--border); padding: 8px 16px; }
+  .topbar .brand { color: var(--primary); }
+  .topbar .brand-mark { background: var(--primary-soft); width: 30px; height: 30px; }
+  /* El menú lateral pasa a ser un panel que se abre y cierra. */
+  .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 50; width: min(280px, 85vw); overflow-y: auto; overscroll-behavior: contain;
+    transform: translateX(-100%); visibility: hidden; transition: transform .2s ease, visibility 0s linear .2s; box-shadow: 0 0 24px rgba(0,0,0,.3); }
+  .shell.menu-open .sidebar { transform: none; visibility: visible; transition: transform .2s ease; }
+  .sidebar-head { display: flex; align-items: flex-start; justify-content: space-between; }
+  .sidebar-close { display: grid; width: 34px; height: 34px; }
+  .shell.menu-open .nav-backdrop { display: block; position: fixed; inset: 0; z-index: 40; background: rgba(0,0,0,.45); border: 0; padding: 0; }
   .main { padding: 20px 16px; }
 }
+@media (max-width: 860px) and (prefers-reduced-motion: reduce) { .sidebar, .shell.menu-open .sidebar { transition: none; } }
 
 /* Cards / table */
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
@@ -192,12 +205,6 @@ textarea.input { height: auto; padding: 10px 12px; min-height: 72px; resize: ver
 .nav-group.collapsed { margin-bottom: 2px; }
 .nav-group.collapsed .nav-items { display: none; }
 @media (prefers-reduced-motion: reduce) { .nav-chevron { transition: none; } }
-@media (max-width: 860px) {
-  .nav-group { flex-direction: row; margin: 0; }
-  .nav-title, .project-switch { display: none; }
-  /* En pantallas angostas el menú es una fila con desplazamiento: se muestra todo. */
-  .nav-items, .nav-group.collapsed .nav-items { display: flex; flex-direction: row; }
-}
 
 /* Seguimiento: curva de avance y barras */
 .chart { position: relative; }

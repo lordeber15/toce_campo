@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import type { MyOverview } from '@toce/shared';
@@ -98,8 +98,17 @@ export function Layout() {
   const isActive = (to: string) => (to === '/' ? pathname === '/' : pathname === to || pathname.startsWith(`${to}/`));
   // Al entrar a una página de un grupo plegado, ese grupo se abre (después se puede volver a plegar).
   const [seenPath, setSeenPath] = useState(pathname);
+  // Menú de hamburguesa (pantallas angostas): se cierra al navegar o con Escape.
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
   if (seenPath !== pathname) {
     setSeenPath(pathname);
+    setMenuOpen(false);
     const group = pathname.startsWith('/mis-registros') || pathname.startsWith('/mi-brigada/')
       ? 'mi-trabajo'
       : NAV.find((g) => g.title && g.items.some((i) => isActive(i.to)))?.title?.toLowerCase();
@@ -117,9 +126,21 @@ export function Layout() {
     <NavLink key={i.to} to={i.to} end className={({ isActive: a }) => 'nav-link' + (a ? ' active' : '')}>{i.label}</NavLink>
   );
   return (
-    <div className="shell">
-      <aside className="sidebar">
+    <div className={'shell' + (menuOpen ? ' menu-open' : '')}>
+      <header className="topbar">
+        <button type="button" className="icon-btn" onClick={() => setMenuOpen(true)} aria-label="Abrir menú" aria-expanded={menuOpen} aria-controls="sidebar">
+          <svg width="20" height="20" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+        </button>
         <div className="brand"><span className="brand-mark"><LeafIcon /></span>TOCE</div>
+      </header>
+      <button type="button" className="nav-backdrop" aria-label="Cerrar menú" tabIndex={-1} onClick={() => setMenuOpen(false)} />
+      <aside className="sidebar" id="sidebar">
+        <div className="sidebar-head">
+          <div className="brand"><span className="brand-mark"><LeafIcon /></span>TOCE</div>
+          <button type="button" className="icon-btn sidebar-close" onClick={() => setMenuOpen(false)} aria-label="Cerrar menú">
+            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /></svg>
+          </button>
+        </div>
         {projects.length > 0 && (
           <div className="project-switch">
             <select className="input" value={project?.id ?? ''} onChange={(e) => setProjectId(e.target.value)} aria-label="Proyecto activo">
