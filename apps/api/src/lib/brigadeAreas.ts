@@ -24,8 +24,10 @@ export async function syncBrigadeAreas(exec: Exec, brigadeIds: (string | null | 
       FROM brigades t
       LEFT JOIN (
         SELECT l.brigade_id,
-          ST_Multi(ST_CollectionExtract(ST_UnaryUnion(ST_Collect(
-            ST_CollectionExtract(ST_SimplifyPreserveTopology(l.geom, 0.00002), 3))), 3)) AS geom,
+          -- Simplificar puede dejar anillos inválidos (huecos fuera de su contorno): se reparan antes de unir,
+          -- y la unión usa una grilla de ~1 cm para que GEOS no falle con topologías de KMZ reales.
+          ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_UnaryUnion(ST_Collect(
+            ST_CollectionExtract(ST_MakeValid(ST_SimplifyPreserveTopology(l.geom, 0.00002)), 3)), 0.0000001)), 3)) AS geom,
           nullif(string_agg(DISTINCT coalesce(l.source_title, regexp_replace(coalesce(l.source_file, ''), '[.]km[lz]$', '', 'i')), ', '), '') AS name,
           string_agg(DISTINCT l.source_file, ', ') AS files
         FROM project_layers l
