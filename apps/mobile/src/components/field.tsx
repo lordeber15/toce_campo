@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { distanceMeters } from '@toce/shared';
+import { distanceMeters, formatUtm, latLngToUtm } from '@toce/shared';
 import type { MethodProgress, StationDay } from '../lib/workPackage';
 import { bearingLabel, formatDistance, type PositionState } from '../lib/location';
 import { colors, radius } from '../theme';
@@ -85,6 +85,7 @@ export function StationCard({ item, pos, showBrigade, onPress }: { item: Station
         <View style={{ flex: 1 }}>
           <Text style={s.code}>{station.code}</Text>
           {!!station.name && <Text style={s.name} numberOfLines={1}>{station.name}</Text>}
+          <Text style={s.utm} selectable>{formatUtm(latLngToUtm(station.lat, station.lng))}</Text>
         </View>
         <DistanceText pos={pos} lat={station.lat} lng={station.lng} />
       </View>
@@ -123,6 +124,7 @@ const s = StyleSheet.create({
   cardTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
   code: { fontSize: 22, fontWeight: '800', color: colors.text, letterSpacing: 0.3 },
   name: { color: colors.text2, marginTop: 2 },
+  utm: { color: colors.text2, fontSize: 12, marginTop: 2, fontVariant: ['tabular-nums'] },
   tags: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   methods: { gap: 12, borderTopWidth: 1, borderTopColor: colors.border, paddingTop: 12 },
   empty: { color: colors.text2 },

@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react';
-import { CircleMarker, GeoJSON, LayersControl, MapContainer, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
+import { CircleMarker, GeoJSON, LayersControl, MapContainer, Polyline, TileLayer, Tooltip, useMap, useMapEvents } from 'react-leaflet';
 import L, { type LatLngBoundsExpression } from 'leaflet';
 import type { FeatureCollection } from 'geojson';
 import 'leaflet/dist/leaflet.css';
@@ -17,6 +17,11 @@ export type MapStation = { id: string; code: string; lat: number; lng: number; c
 /** Foto ubicada: verde dentro del polígono de la brigada, rojo fuera, gris si no se pudo verificar. */
 export type MapPhoto = { id: string; lat: number; lng: number; outside: boolean | null; label: string; selected?: boolean };
 
+/** Recorrido de tracking GPS: línea [lat, lng] con su inicio (verde) y fin (rojo). */
+export type MapTrack = {
+  id: string; color: string; line: [number, number][]; start: [number, number] | null; end: [number, number] | null; label: string; selected?: boolean;
+};
+
 export const PHOTO_COLORS = { inside: '#2F9E44', outside: '#E03131', unknown: '#868E96' };
 export const BRIGADE_AREA_COLOR = '#F76707';
 const photoColor = (o: boolean | null) => (o === true ? PHOTO_COLORS.outside : o === false ? PHOTO_COLORS.inside : PHOTO_COLORS.unknown);
@@ -27,6 +32,8 @@ type Props = {
   areas?: FeatureCollection | null;
   photos?: MapPhoto[];
   onPhotoClick?: (id: string) => void;
+  tracks?: MapTrack[];
+  onTrackClick?: (id: string) => void;
   stations?: MapStation[];
   onStationClick?: (id: string) => void;
   onMapClick?: (lat: number, lng: number) => void;
@@ -35,7 +42,7 @@ type Props = {
   fitKey?: string; // cambia para volver a encuadrar
 };
 
-function FitBounds({ layers, areas, stations, photos, fitKey }: Pick<Props, 'layers' | 'areas' | 'stations' | 'photos' | 'fitKey'>) {
+function FitBounds({ layers, areas, stations, photos, tracks, fitKey }: Pick<Props, 'layers' | 'areas' | 'stations' | 'photos' | 'tracks' | 'fitKey'>) {
   const map = useMap();
   useEffect(() => {
     const b = L.latLngBounds([]);
@@ -43,6 +50,11 @@ function FitBounds({ layers, areas, stations, photos, fitKey }: Pick<Props, 'lay
     if (areas?.features.length) b.extend(L.geoJSON(areas).getBounds());
     stations?.forEach((s) => b.extend([s.lat, s.lng]));
     photos?.forEach((p) => b.extend([p.lat, p.lng]));
+    tracks?.forEach((t) => {
+      t.line.forEach((pt) => b.extend(pt));
+      if (t.start) b.extend(t.start);
+      if (t.end) b.extend(t.end);
+    });
     if (b.isValid()) map.fitBounds(b as LatLngBoundsExpression, { padding: [24, 24], maxZoom: 15 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fitKey, map]);
@@ -54,7 +66,7 @@ function ClickHandler({ onMapClick }: { onMapClick?: (lat: number, lng: number) 
   return null;
 }
 
-export function MapView({ layers, areas, photos = [], onPhotoClick, stations = [], onStationClick, onMapClick, pick, height = 480, fitKey }: Props) {
+export function MapView({ layers, areas, photos = [], onPhotoClick, tracks = [], onTrackClick, stations = [], onStationClick, onMapClick, pick, height = 480, fitKey }: Props) {
   const layerKey = useMemo(() => (layers ? layers.features.map((f) => f.id).join(',') : ''), [layers]);
   const areaKey = useMemo(() => (areas ? areas.features.map((f) => f.id).join(',') : ''), [areas]);
   return (
@@ -104,6 +116,30 @@ export function MapView({ layers, areas, photos = [], onPhotoClick, stations = [
           }}
         />
       )}
+      {tracks.map((t) => (
+        <Polyline
+          key={`l-${t.id}`}
+          positions={t.line}
+          pathOptions={{ color: t.color, weight: t.selected ? 6 : 3.5, opacity: t.selected ? 1 : 0.85 }}
+          eventHandlers={{ click: () => onTrackClick?.(t.id) }}
+        >
+          <Tooltip sticky>{t.label}</Tooltip>
+        </Polyline>
+      ))}
+      {tracks.flatMap((t) => [
+        t.start && (
+          <CircleMarker key={`s-${t.id}`} center={t.start} radius={5} pathOptions={{ color: t.color, weight: 2, fillColor: '#2F9E44', fillOpacity: 1 }}
+            eventHandlers={{ click: () => onTrackClick?.(t.id) }}>
+            <Tooltip direction="top">Activado · {t.label}</Tooltip>
+          </CircleMarker>
+        ),
+        t.end && (
+          <CircleMarker key={`e-${t.id}`} center={t.end} radius={5} pathOptions={{ color: t.color, weight: 2, fillColor: '#E03131', fillOpacity: 1 }}
+            eventHandlers={{ click: () => onTrackClick?.(t.id) }}>
+            <Tooltip direction="top">Desactivado · {t.label}</Tooltip>
+          </CircleMarker>
+        ),
+      ])}
       {stations.map((s) => (
         <CircleMarker
           key={s.id}
@@ -130,7 +166,7 @@ export function MapView({ layers, areas, photos = [], onPhotoClick, stations = [
       ))}
       {pick && <CircleMarker center={[pick.lat, pick.lng]} radius={8} pathOptions={{ color: '#E03131', weight: 3, fillOpacity: 0.3 }} />}
       <ClickHandler onMapClick={onMapClick} />
-      <FitBounds layers={layers} areas={areas} stations={stations} photos={photos} fitKey={fitKey ?? `${layerKey}|${areaKey}|${stations.length}|${photos.length}`} />
+      <FitBounds layers={layers} areas={areas} stations={stations} photos={photos} tracks={tracks} fitKey={fitKey ?? `${layerKey}|${areaKey}|${stations.length}|${photos.length}|${tracks.length}`} />
     </MapContainer>
   );
 }

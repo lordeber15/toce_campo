@@ -24,6 +24,7 @@ import { BrigadeTrackingPage } from './pages/BrigadeTracking';
 import { RecordDetailPage, RecordsPage } from './pages/Records';
 import { ReportsPage } from './pages/Reports';
 import { PhotoMapPage } from './pages/PhotoMap';
+import { GpsTracksPage } from './pages/GpsTracks';
 
 export function App() {
   const { user, loading, can } = useAuth();
@@ -59,6 +60,7 @@ export function App() {
               <Route path="registros" element={<RecordsPage />} />
               <Route path="registros/:id" element={<RecordDetailPage />} />
               <Route path="mapa-fotos" element={<PhotoMapPage />} />
+              <Route path="tracking-gps" element={<GpsTracksPage />} />
               <Route path="reportes" element={<ReportsPage />} />
               <Route path="alertas" element={<AlertsPage />} />
               <Route path="consultas" element={<InquiriesPage />} />

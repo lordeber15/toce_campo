@@ -12,6 +12,7 @@ import { API_URL } from './config';
 import { getDb } from './db';
 import { deleteLocalFiles } from './photo';
 import { getDeviceId } from './secure';
+import { pushTracks, syncLocationUpdates } from './gpsTracking';
 
 /**
  * Registro de campo en el teléfono: ejecuciones de unidades, alertas, fotos, notas de voz y
@@ -423,6 +424,11 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
   useEffect(() => {
     void reload(); // eslint-disable-line react-hooks/set-state-in-effect
   }, [reload]);
+
+  // Tracking activo de antes (la app se cerró o el teléfono se reinició): retoma la lectura de GPS.
+  useEffect(() => {
+    if (userId) void syncLocationUpdates().catch(() => {});
+  }, [userId]);
 
   const syncNow = useCallback(async () => {
     if (!userId || !hasAccessToken()) return;
@@ -885,6 +891,8 @@ async function pushAll(
       await db.runAsync('UPDATE inquiry_replies_out SET sync_error = ?, synced = ? WHERE client_id = ?', err.message, final ? 2 : 0, m.client_id);
     }
   }
+  // 3c) Tracking GPS de las estaciones (tramos y puntos del recorrido).
+  await pushTracks(userId, deviceId);
   await reload();
 
   // 4) Datos de fotos y audios (requiere que su unidad o alerta ya esté en el servidor).

@@ -141,6 +141,29 @@ const MIGRATIONS: string[] = [
      synced INTEGER NOT NULL DEFAULT 0,   -- 0 por enviar · 1 enviada · 2 rechazada por el servidor
      sync_error TEXT
    );`,
+  // Tracking GPS por estación: tramos (activar → desactivar) y puntos del recorrido por enviar.
+  `CREATE TABLE IF NOT EXISTS track_sessions (
+     client_id TEXT PRIMARY KEY NOT NULL,
+     user_id TEXT NOT NULL,
+     station_id TEXT NOT NULL,
+     schedule_id TEXT,
+     brigade_id TEXT,
+     started_at TEXT NOT NULL,
+     start_lat REAL, start_lng REAL, start_accuracy REAL,
+     ended_at TEXT,
+     end_lat REAL, end_lng REAL, end_accuracy REAL,
+     updated_at TEXT NOT NULL,
+     synced_at TEXT,
+     sync_error TEXT
+   );
+   CREATE INDEX IF NOT EXISTS track_sessions_station_idx ON track_sessions (user_id, station_id);
+   CREATE TABLE IF NOT EXISTS track_points (
+     session_client_id TEXT NOT NULL,
+     at TEXT NOT NULL,
+     lat REAL NOT NULL, lng REAL NOT NULL, accuracy REAL, altitude REAL,
+     synced INTEGER NOT NULL DEFAULT 0,
+     PRIMARY KEY (session_client_id, at)
+   );`,
 ];
 
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;

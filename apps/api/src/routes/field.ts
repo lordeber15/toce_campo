@@ -24,7 +24,7 @@ const UNIT_STATUS_BY_EXECUTION = {
 const EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'audio/mp4': 'm4a', 'audio/m4a': 'm4a', 'audio/aac': 'aac' };
 
 /** El usuario participa en una brigada activa programada en la estación (o es de gestión web). */
-async function canWorkStation(userId: string, roles: string[], stationId: string): Promise<boolean> {
+export async function canWorkStation(userId: string, roles: string[], stationId: string): Promise<boolean> {
   if (hasAnyRole(roles as never, WEB_ROLES)) return true;
   const r = await db.execute(sql`
     SELECT 1 FROM schedules sc JOIN brigades b ON b.id = sc.brigade_id AND b.is_active

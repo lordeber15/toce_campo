@@ -125,6 +125,7 @@ export const incidentTypeEnum = pgEnum('incident_type', [
   'hospedaje',
   'equipos',
   'falta_materiales',
+  'tracking_insuficiente',
 ]);
 export const incidentMomentEnum = pgEnum('incident_moment', ['antes', 'durante', 'posterior']);
 export const incidentStatusEnum = pgEnum('incident_status', ['abierta', 'en_revision', 'resuelta', 'rechazada', 'cerrada']);
@@ -366,4 +367,54 @@ export const syncLogs = pgTable(
     ok: boolean('ok').notNull().default(true),
   },
   (t) => [index('sync_logs_user_idx').on(t.userId, t.startedAt)],
+);
+
+/** Tramo de tracking GPS de un especialista en una estación (de activar a desactivar). */
+export const trackSessions = pgTable(
+  'track_sessions',
+  {
+    id: id(),
+    clientId: uuid('client_id').notNull(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id),
+    projectId: uuid('project_id')
+      .notNull()
+      .references(() => projects.id),
+    stationId: uuid('station_id')
+      .notNull()
+      .references(() => stations.id),
+    scheduleId: uuid('schedule_id').references(() => schedules.id),
+    brigadeId: uuid('brigade_id').references(() => brigades.id),
+    startedAt: timestamp('started_at', { withTimezone: true }).notNull(),
+    startGeom: pointGeom('start_geom'),
+    startAccuracy: doublePrecision('start_accuracy'),
+    endedAt: timestamp('ended_at', { withTimezone: true }),
+    endGeom: pointGeom('end_geom'),
+    endAccuracy: doublePrecision('end_accuracy'),
+    deviceId: text('device_id'),
+    clientUpdatedAt: timestamp('client_updated_at', { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('track_sessions_client_idx').on(t.clientId),
+    index('track_sessions_station_user_idx').on(t.stationId, t.userId),
+    index('track_sessions_project_idx').on(t.projectId, t.startedAt),
+  ],
+);
+
+/** Puntos del recorrido de un tramo de tracking (uno por lectura de GPS; idempotente por hora). */
+export const trackPoints = pgTable(
+  'track_points',
+  {
+    sessionId: uuid('session_id')
+      .notNull()
+      .references(() => trackSessions.id, { onDelete: 'cascade' }),
+    recordedAt: timestamp('recorded_at', { withTimezone: true }).notNull(),
+    geom: pointGeom('geom').notNull(),
+    accuracy: doublePrecision('accuracy'),
+    altitude: doublePrecision('altitude'),
+  },
+  (t) => [uniqueIndex('track_points_session_at_idx').on(t.sessionId, t.recordedAt)],
 );

@@ -92,6 +92,13 @@
       "when": 1795572938167,
       "tag": "0012_layer_tree",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1795651515037,
+      "tag": "0013_gps_tracks",
+      "breakpoints": true
     }
   ]
 }

@@ -135,7 +135,7 @@ const brigadesRoutes: FastifyPluginAsync = async (app) => {
 
   r.put(
     '/brigades/:id/area',
-    { onRequest: write, schema: { params: idParam, body: brigadeAreaSchema } },
+    { onRequest: write, bodyLimit: 100 * 1024 * 1024, schema: { params: idParam, body: brigadeAreaSchema } },
     async (req) => {
       const geoms = sql.join(
         req.body.geometries.map((g) => sql`ST_MakeValid(ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(g)}), 4326)))`),

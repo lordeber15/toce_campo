@@ -52,7 +52,11 @@
       [
         "expo-location",
         {
-          "locationWhenInUsePermission": "TOCE Campo usa tu ubicación para mostrar la distancia a las estaciones y registrar coordenadas en las fotos."
+          "locationWhenInUsePermission": "TOCE Campo usa tu ubicación para mostrar la distancia a las estaciones y registrar coordenadas en las fotos.",
+          "locationAlwaysAndWhenInUsePermission": "TOCE Campo registra tu recorrido en la estación de muestreo mientras el Tracking está activo, también con la pantalla apagada.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
         }
       ],
       [

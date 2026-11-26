@@ -6,6 +6,8 @@ export const INCIDENT_TYPES = [
   'metodologica', 'climatica', 'lluvia_intensa', 'tecnica', 'imposibilidad', 'logistica', 'seguridad', 'otra',
   // Logísticas (Sprint 1.6)
   'accidente_movilidad', 'desperfecto_mecanico', 'hospedaje', 'equipos', 'falta_materiales',
+  // Automática: EM cerrada con menos de 2 h de tracking GPS.
+  'tracking_insuficiente',
 ] as const;
 export type IncidentType = (typeof INCIDENT_TYPES)[number];
 export const INCIDENT_TYPE_LABELS: Record<IncidentType, string> = {
@@ -22,6 +24,7 @@ export const INCIDENT_TYPE_LABELS: Record<IncidentType, string> = {
   hospedaje: 'Problema de hospedaje',
   equipos: 'Problema con equipos',
   falta_materiales: 'Falta de materiales',
+  tracking_insuficiente: 'Tracking menor a 2 h',
 };
 
 /** Tipos que ofrece cada formulario del teléfono. */

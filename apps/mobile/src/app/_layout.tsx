@@ -3,6 +3,8 @@ import { StatusBar } from 'expo-status-bar';
 import { ActivityIndicator, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from '../lib/auth';
+// Define la tarea de tracking GPS al arrancar (Android la invoca también con la app cerrada).
+import '../lib/gpsTracking';
 import { colors } from '../theme';
 
 function RootNavigator() {

@@ -13,6 +13,7 @@ import { BASEMAP_STYLE_URL, formatMb, useBasemap } from '../../lib/basemap';
 import { bearingLabel, formatDistance, usePosition } from '../../lib/location';
 import { todayLima, usePackageIndex } from '../../lib/workPackage';
 import { useAuth } from '../../lib/auth';
+import { myTrackLines, onTrackingChange } from '../../lib/gpsTracking';
 import { colors, radius } from '../../theme';
 
 /** Colores por tipo de capa (si la capa del KMZ no trae el suyo). Leyenda de las imágenes de referencia. */
@@ -30,6 +31,9 @@ const KIND_ORDER: LayerKind[] = ['uv', 'aii', 'aid', 'superposicion', 'huella', 
 /** Polígono de trabajo de las brigadas y fotos: dentro (verde), fuera (rojo), sin verificar (gris). */
 const AREA_COLOR = '#F76707';
 const PHOTO_COLOR = { inside: '#2F9E44', outside: '#E03131', unknown: '#868E96' };
+/** Recorridos de tracking: un color por EM. */
+const TRACK_PALETTE = ['#7048E8', '#1C7ED6', '#D6336C', '#0CA678', '#F08C00', '#495057'];
+const TRACK_COLOR = TRACK_PALETTE[0]!;
 
 /** Foto en el mapa: propia (guardada en el teléfono) o del equipo (supervisor, desde el servidor). */
 type MapPhoto =
@@ -42,7 +46,7 @@ type Picked = { kind: 'station'; station: WpStation } | { kind: 'point'; lat: nu
 export default function MapScreen() {
   const { station: stationParam } = useLocalSearchParams<{ station?: string }>();
   const index = usePackageIndex();
-  const { online } = useAuth();
+  const { online, user } = useAuth();
   const pos = usePosition();
   const field = useField();
   const camera = useRef<CameraRef>(null);
@@ -90,6 +94,34 @@ export default function MapScreen() {
     void field.myPhotos().then((rows) => { if (alive) setMine(rows); });
     return () => { alive = false; };
   }, [field.myPhotos, field.rev]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Mis recorridos de tracking (se actualizan al llegar puntos nuevos).
+  const [tracks, setTracks] = useState<Awaited<ReturnType<typeof myTrackLines>>>([]);
+  useEffect(() => {
+    if (!user) return;
+    let alive = true;
+    const load = () => void myTrackLines(user.id).then((rows) => { if (alive) setTracks(rows); });
+    load();
+    const off = onTrackingChange(load);
+    return () => { alive = false; off(); };
+  }, [user]);
+  const trackData = useMemo<GeoJSON.FeatureCollection>(() => {
+    const colorOf = new globalThis.Map<string, string>();
+    for (const t of tracks) if (!colorOf.has(t.stationId)) colorOf.set(t.stationId, TRACK_PALETTE[colorOf.size % TRACK_PALETTE.length]!);
+    const features: GeoJSON.Feature[] = [];
+    for (const t of tracks) {
+      const color = colorOf.get(t.stationId)!;
+      const code = index?.stations.get(t.stationId)?.code ?? '';
+      if (t.line.length > 1) features.push({ type: 'Feature', properties: { color, code }, geometry: { type: 'LineString', coordinates: t.line } });
+      if (t.startLat != null && t.startLng != null) {
+        features.push({ type: 'Feature', properties: { color, end: 0 }, geometry: { type: 'Point', coordinates: [t.startLng, t.startLat] } });
+      }
+      if (t.endLat != null && t.endLng != null) {
+        features.push({ type: 'Feature', properties: { color, end: 1 }, geometry: { type: 'Point', coordinates: [t.endLng, t.endLat] } });
+      }
+    }
+    return { type: 'FeatureCollection', features };
+  }, [tracks, index]);
 
   // Supervisor: fotos de las brigadas que supervisa (con conexión), del periodo del paquete.
   const supervised = useMemo(() => myBrigades.filter((b) => b.myRoles.includes('supervisor')).map((b) => b.id), [myBrigades]);
@@ -203,6 +235,28 @@ export default function MapScreen() {
           </GeoJSONSource>
         )}
 
+        {trackData.features.length > 0 && !hidden.has('tracking') && (
+          <GeoJSONSource id="tracking" data={trackData}>
+            <Layer
+              type="line"
+              id="tracking-linea"
+              filter={['==', ['geometry-type'], 'LineString']}
+              style={{ lineColor: ['get', 'color'], lineWidth: 3.5, lineOpacity: 0.9, lineCap: 'round', lineJoin: 'round' }}
+            />
+            <Layer
+              type="circle"
+              id="tracking-extremos"
+              filter={['==', ['geometry-type'], 'Point']}
+              style={{
+                circleRadius: 5,
+                circleColor: ['case', ['==', ['get', 'end'], 1], '#E03131', '#2F9E44'],
+                circleStrokeWidth: 2,
+                circleStrokeColor: ['get', 'color'],
+              }}
+            />
+          </GeoJSONSource>
+        )}
+
         {!hidden.has('estaciones') && (
           <GeoJSONSource
             id="estaciones"
@@ -284,6 +338,7 @@ export default function MapScreen() {
       <ScrollView horizontal style={s.chipsBar} contentContainerStyle={s.chips} showsHorizontalScrollIndicator={false}>
         {[
           ...(areaData.features.length ? [{ key: 'poligono', label: 'Polígono de brigada', color: AREA_COLOR }] : []),
+          ...(tracks.length ? [{ key: 'tracking', label: `Mi tracking (${new Set(tracks.map((x) => x.stationId)).size} EM)`, color: TRACK_COLOR }] : []),
           ...(mine.length ? [{ key: 'mis-fotos', label: `Mis fotos (${mine.length})`, color: PHOTO_COLOR.inside }] : []),
           ...(supervised.length ? [{ key: 'fotos-equipo', label: `Fotos de mis brigadas (${team.length})`, color: '#1C7ED6' }] : []),
           ...kinds.map((k) => ({ key: k as string, label: KIND[k].label, color: KIND[k].color })),

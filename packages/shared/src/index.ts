@@ -9,6 +9,7 @@ export * from './areas.js';
 export * from './incidents.js';
 export * from './logistics.js';
 export * from './tracking.js';
+export * from './gpsTracks.js';
 export * from './records.js';
 export * from './reports.js';
 export * from './inquiries.js';

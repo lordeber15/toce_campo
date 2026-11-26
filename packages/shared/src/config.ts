@@ -19,7 +19,7 @@ export const projectSchema = z.object({
 export const brigadeAreaSchema = z.object({
   name: z.string().trim().min(1).max(200),
   sourceFile: z.string().max(255).nullish(),
-  geometries: z.array(z.object({ type: z.enum(['Polygon', 'MultiPolygon']), coordinates: z.array(z.any()) })).min(1).max(500),
+  geometries: z.array(z.object({ type: z.enum(['Polygon', 'MultiPolygon']), coordinates: z.array(z.any()) })).min(1).max(20000),
 });
 
 export const brigadeSchema = z.object({
