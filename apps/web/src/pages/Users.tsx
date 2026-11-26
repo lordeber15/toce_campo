@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from 'react';
+import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ROLES, ROLE_LABELS, type Role } from '@toce/shared';
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth';
+import { Dialog } from '../components/Dialog';
 
 type UserRow = {
   id: string; dni: string; fullName: string; email: string | null; phone: string | null;
@@ -124,8 +125,7 @@ function UserDialog({ user, specialties, onClose, onSaved }: { user: UserRow | n
     onError: (e) => setError(e instanceof ApiError ? (e.issues?.map((i) => i.message).join('. ') || e.message) : 'Error al guardar'),
   });
 
-  function submit(e: FormEvent) {
-    e.preventDefault();
+  function submit() {
     setError(null);
     if (!form.roles.length) return setError('Selecciona al menos un rol');
     if (needsSpecialty && !form.specialtyId) return setError('Un especialista debe tener especialidad');
@@ -137,43 +137,44 @@ function UserDialog({ user, specialties, onClose, onSaved }: { user: UserRow | n
   const toggleRole = (r: Role) => setForm({ ...form, roles: form.roles.includes(r) ? form.roles.filter((x) => x !== r) : [...form.roles, r] });
 
   return (
-    <div className="overlay" onClick={onClose}>
-      <form className="card dialog" onClick={(e) => e.stopPropagation()} onSubmit={submit} role="dialog" aria-modal="true" aria-labelledby="dlg-title">
-        <h2 id="dlg-title">{user ? 'Editar usuario' : 'Nuevo usuario'}</h2>
-        {error && <div className="alert-error" role="alert">{error}</div>}
-        <div className="grid-2">
-          <div className="field"><label htmlFor="u-dni">DNI</label><input id="u-dni" className="input" value={form.dni} onChange={set('dni')} inputMode="numeric" required /></div>
-          <div className="field"><label htmlFor="u-name">Nombre completo</label><input id="u-name" className="input" value={form.fullName} onChange={set('fullName')} required /></div>
-          <div className="field"><label htmlFor="u-phone">Teléfono</label><input id="u-phone" className="input" value={form.phone} onChange={set('phone')} /></div>
-          <div className="field"><label htmlFor="u-email">Correo</label><input id="u-email" className="input" type="email" value={form.email} onChange={set('email')} /></div>
+    <Dialog
+      title={user ? 'Editar usuario' : 'Nuevo usuario'}
+      onClose={onClose}
+      onSubmit={submit}
+      footer={<>
+        <button type="button" className="btn" onClick={onClose}>Cancelar</button>
+        <button type="submit" className="btn btn-primary" disabled={save.isPending}>{save.isPending ? 'Guardando…' : 'Guardar'}</button>
+      </>}
+    >
+      {error && <div className="alert-error" role="alert">{error}</div>}
+      <div className="grid-2">
+        <div className="field"><label htmlFor="u-dni">DNI</label><input id="u-dni" className="input" value={form.dni} onChange={set('dni')} inputMode="numeric" required /></div>
+        <div className="field"><label htmlFor="u-name">Nombre completo</label><input id="u-name" className="input" value={form.fullName} onChange={set('fullName')} required /></div>
+        <div className="field"><label htmlFor="u-phone">Teléfono</label><input id="u-phone" className="input" value={form.phone} onChange={set('phone')} /></div>
+        <div className="field"><label htmlFor="u-email">Correo</label><input id="u-email" className="input" type="email" value={form.email} onChange={set('email')} /></div>
+      </div>
+      <div className="field">
+        <label>Roles</label>
+        <div className="checks">
+          {ROLES.map((r) => (
+            <label key={r}><input type="checkbox" checked={form.roles.includes(r)} onChange={() => toggleRole(r)} />{ROLE_LABELS[r]}</label>
+          ))}
         </div>
+      </div>
+      {needsSpecialty && (
         <div className="field">
-          <label>Roles</label>
-          <div className="checks">
-            {ROLES.map((r) => (
-              <label key={r}><input type="checkbox" checked={form.roles.includes(r)} onChange={() => toggleRole(r)} />{ROLE_LABELS[r]}</label>
-            ))}
-          </div>
+          <label htmlFor="u-spec">Especialidad</label>
+          <select id="u-spec" className="input" value={form.specialtyId} onChange={set('specialtyId')}>
+            <option value="">Seleccionar…</option>
+            {specialties.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
         </div>
-        {needsSpecialty && (
-          <div className="field">
-            <label htmlFor="u-spec">Especialidad</label>
-            <select id="u-spec" className="input" value={form.specialtyId} onChange={set('specialtyId')}>
-              <option value="">Seleccionar…</option>
-              {specialties.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-            </select>
-          </div>
-        )}
-        <div className="field">
-          <label htmlFor="u-pwd">{user ? 'Nueva contraseña (opcional)' : 'Contraseña inicial'}</label>
-          <input id="u-pwd" className="input" type="password" autoComplete="new-password" value={form.password} onChange={set('password')} />
-          <span className="muted" style={{ fontSize: 12 }}>El usuario deberá cambiarla en su primer ingreso.</span>
-        </div>
-        <div className="dialog-actions">
-          <button type="button" className="btn" onClick={onClose}>Cancelar</button>
-          <button type="submit" className="btn btn-primary" disabled={save.isPending}>{save.isPending ? 'Guardando…' : 'Guardar'}</button>
-        </div>
-      </form>
-    </div>
+      )}
+      <div className="field">
+        <label htmlFor="u-pwd">{user ? 'Nueva contraseña (opcional)' : 'Contraseña inicial'}</label>
+        <input id="u-pwd" className="input" type="password" autoComplete="new-password" value={form.password} onChange={set('password')} />
+        <span className="muted" style={{ fontSize: 12 }}>El usuario deberá cambiarla en su primer ingreso.</span>
+      </div>
+    </Dialog>
   );
 }

@@ -11,7 +11,7 @@ type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 export const dayTs = (d: string) => `${d}T12:00:00-05:00`;
 export const fmtDay = (d: string) => d.split('-').reverse().join('/');
 
-type Visit = { id: string; plannedDate: string; stationId: string; brigadeId: string; projectId: string; specialtyId: string | null; status: string };
+type Visit = { id: string; plannedDate: string; stationId: string | null; brigadeId: string; projectId: string; specialtyId: string | null; status: string };
 
 /** Visita bloqueada para el cambio de fecha. */
 export async function lockVisit(tx: Tx, scheduleId: string): Promise<Visit> {

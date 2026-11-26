@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   DOCUMENT_CATEGORIES, DOCUMENT_CATEGORY_LABELS, FILE_ORIGIN_FILTERS, FILE_ORIGIN_LABELS, FILE_TYPES, FILE_TYPE_LABELS,
-  INQUIRY_FILE_MAX_BYTES, INQUIRY_FILE_TYPES,
   type DocumentCategory, type FileRow, type FileType, type FilesFacets, type FilesPage,
 } from '@toce/shared';
 import { api, download } from '../lib/api';
 import { useProject } from '../lib/project';
 import { Dialog, ErrorBox, NoProject } from '../components/Dialog';
+import { FilePicker, fileProblem, uploadFiles } from '../components/Attachments';
+import { BrigadeSelect, DateRange } from '../components/Filters';
 
 type Filters = {
   origin: string; type: string; brigadeId: string; personId: string; stationId: string; methodId: string; from: string; to: string; q: string;
@@ -107,10 +108,7 @@ export function DocumentsPage() {
             <option value="">Todos los orígenes</option>
             {FILE_ORIGIN_FILTERS.map((o) => <option key={o} value={o}>{FILE_ORIGIN_LABELS[o]}</option>)}
           </select>
-          <select className="input" value={f.brigadeId} onChange={(e) => set('brigadeId', e.target.value)} aria-label="Brigada">
-            <option value="">Todas las brigadas</option>
-            {facets.data?.brigades.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
+          <BrigadeSelect value={f.brigadeId} onChange={(v) => set('brigadeId', v)} brigades={facets.data?.brigades ?? []} />
           <select className="input" value={f.personId} onChange={(e) => set('personId', e.target.value)} aria-label="Persona">
             <option value="">Todas las personas</option>
             {facets.data?.people.map((p) => <option key={p.id} value={p.id}>{p.fullName}</option>)}
@@ -123,14 +121,7 @@ export function DocumentsPage() {
             <option value="">Todos los métodos</option>
             {facets.data?.methods.map((m) => <option key={m.id} value={m.id}>{m.code} · {m.name}</option>)}
           </select>
-          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <span className="hint">Desde</span>
-            <input className="input" type="date" value={f.from} onChange={(e) => set('from', e.target.value)} />
-          </label>
-          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <span className="hint">Hasta</span>
-            <input className="input" type="date" value={f.to} onChange={(e) => set('to', e.target.value)} />
-          </label>
+          <DateRange from={f.from} to={f.to} onFrom={(v) => set('from', v)} onTo={(v) => set('to', v)} />
           <input className="input" type="search" value={text} onChange={(e) => setText(e.target.value)} placeholder="Buscar unidad, nombre, estación o persona" aria-label="Buscar" style={{ minWidth: 220 }} />
           {filtered && <button className="btn btn-sm" onClick={() => { setF(EMPTY); setText(''); setPage(1); }}>Limpiar filtros</button>}
           <div className="segmented" role="group" aria-label="Vista" style={{ marginLeft: 'auto' }}>
@@ -273,20 +264,14 @@ function Preview({ file, onClose }: { file: FileRow; onClose: () => void }) {
 
 function UploadDialog({ projectId, facets, onClose }: { projectId: string; facets: FilesFacets; onClose: () => void }) {
   const qc = useQueryClient();
-  const ref = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [category, setCategory] = useState<DocumentCategory>('acta');
   const [brigadeId, setBrigadeId] = useState('');
   const [stationId, setStationId] = useState('');
-  const bad = files.find((x) => !(INQUIRY_FILE_TYPES as readonly string[]).includes(x.type));
-  const big = files.find((x) => x.size > INQUIRY_FILE_MAX_BYTES);
-  const problem = bad ? `“${bad.name}” no es un tipo admitido (fotos, PDF, audio, Excel o Word).` : big ? `“${big.name}” supera los 25 MB.` : null;
+  const problem = fileProblem(files);
   const save = useMutation({
     mutationFn: async () => {
-      for (const x of files) {
-        const qs = new URLSearchParams({ name: x.name, category, ...(brigadeId ? { brigadeId } : {}), ...(stationId ? { stationId } : {}) });
-        await api(`/projects/${projectId}/documents?${qs}`, { method: 'PUT', body: x, headers: { 'content-type': x.type } });
-      }
+      await uploadFiles((x) => `/projects/${projectId}/documents?${new URLSearchParams({ name: x.name, category, ...(brigadeId ? { brigadeId } : {}), ...(stationId ? { stationId } : {}) })}`, files);
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ['files'] });
@@ -329,17 +314,7 @@ function UploadDialog({ projectId, facets, onClose }: { projectId: string; facet
           </select>
         </label>
       </div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
-        <input ref={ref} type="file" multiple accept={INQUIRY_FILE_TYPES.join(',')} hidden onChange={(e) => { setFiles([...files, ...Array.from(e.target.files ?? [])]); e.target.value = ''; }} />
-        <button type="button" className="btn btn-sm" onClick={() => ref.current?.click()}>Elegir archivos</button>
-        {files.map((x, i) => (
-          <span key={i} className="chip" style={{ gap: 4 }}>
-            {x.name} ({mb(x.size)})
-            <button type="button" className="icon-btn" style={{ width: 18, height: 18, fontSize: 14 }} onClick={() => setFiles(files.filter((_, j) => j !== i))} aria-label={`Quitar ${x.name}`}>×</button>
-          </span>
-        ))}
-        {!files.length && <span className="hint">Fotos, PDF, audio, Excel o Word; hasta 25 MB cada uno.</span>}
-      </div>
+      <FilePicker files={files} onChange={setFiles} label="Elegir archivos" />
       <ErrorBox error={problem ? new Error(problem) : save.error} />
     </Dialog>
   );

@@ -1,14 +1,19 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ADMIN_ROLES } from '@toce/shared';
+import { ACTIVITY_TYPE_LABELS, ADMIN_ROLES, type ActivityType } from '@toce/shared';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useProject } from '../lib/project';
 import { Dialog, ErrorBox, NoProject } from '../components/Dialog';
+import { useBrigades, type BrigadeRow } from '../components/Filters';
 import type { Station } from './Stations';
 
-type Brigade = { id: string; name: string; isActive: boolean; specialtyId: string | null; specialtyName: string | null };
-type Sched = { id: string; plannedDate: string; originalDate: string; status: string; brigadeId: string; stationId: string; stationCode: string; sortOrder: number };
+type Brigade = BrigadeRow;
+/** Programación: visita a una estación o, sin estación, otra actividad del cronograma (movilización, descanso...). */
+type Sched = {
+  id: string; plannedDate: string; originalDate: string; status: string; brigadeId: string; sortOrder: number;
+  activityType: ActivityType | null; detail: string | null; stationId: string | null; stationCode: string | null;
+};
 
 const TZ = 'America/Lima';
 const iso = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: TZ });
@@ -36,12 +41,12 @@ export function SchedulePage() {
   const [adding, setAdding] = useState<{ brigade: Brigade; date: string } | null>(null);
   const days = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
 
-  const brigades = useQuery({ queryKey: ['brigades', project?.id], enabled: !!project, queryFn: () => api<Brigade[]>(`/projects/${project!.id}/brigades`) });
+  const brigades = useBrigades(project?.id);
   const stations = useQuery({ queryKey: ['stations', project?.id], enabled: !!project, queryFn: () => api<Station[]>(`/projects/${project!.id}/stations`) });
   const scheds = useQuery({
     queryKey: ['schedules', project?.id, weekStart],
     enabled: !!project,
-    queryFn: () => api<Sched[]>(`/projects/${project!.id}/schedules?from=${days[0]}&to=${days[6]}`),
+    queryFn: () => api<Sched[]>(`/projects/${project!.id}/schedules?from=${days[0]}&to=${days[6]}&includeActivities=true`),
   });
   const remove = useMutation({
     mutationFn: (id: string) => api(`/schedules/${id}`, { method: 'DELETE' }),
@@ -52,20 +57,23 @@ export function SchedulePage() {
   if (!project) return <NoProject />;
   const active = (brigades.data ?? []).filter((b) => b.isActive);
   const cell = (bId: string, d: string) => (scheds.data ?? []).filter((s) => s.brigadeId === bId && s.plannedDate === d).sort((a, b) => a.sortOrder - b.sortOrder);
-  const weekTotal = scheds.data?.length ?? 0;
+  const weekVisits = (scheds.data ?? []).filter((s) => s.stationId).length;
+  const weekOther = (scheds.data?.length ?? 0) - weekVisits;
+  const start = project.startDate?.slice(0, 10) ?? null;
 
   return (
     <>
       <div className="page-head">
-        <div><h1>Cronograma</h1><p>Estaciones programadas por brigada y día. Una brigada puede tener varias estaciones en un día.</p></div>
+        <div><h1>Cronograma</h1><p>Estaciones y actividades (movilización, descanso…) por brigada y día. Una brigada puede tener varias estaciones en un día.</p></div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <button className="btn btn-sm" onClick={() => setWeekStart(addDays(weekStart, -7))} aria-label="Semana anterior">←</button>
           <button className="btn btn-sm" onClick={() => setWeekStart(mondayOf(today))}>Hoy</button>
+          {start && <button className="btn btn-sm" onClick={() => setWeekStart(mondayOf(start))} title={`Inicio del proyecto: ${dayLabel(start)}`}>Inicio</button>}
           <button className="btn btn-sm" onClick={() => setWeekStart(addDays(weekStart, 7))} aria-label="Semana siguiente">→</button>
           <input type="date" className="input" style={{ width: 160, height: 30 }} value={weekStart} onChange={(e) => e.target.value && setWeekStart(mondayOf(e.target.value))} aria-label="Ir a la semana" />
         </div>
       </div>
-      <p className="hint" style={{ marginTop: -8, marginBottom: 12 }}>Semana del {dayLabel(days[0]!)} al {dayLabel(days[6]!)} · {weekTotal} programaciones</p>
+      <p className="hint" style={{ marginTop: -8, marginBottom: 12 }}>Semana del {dayLabel(days[0]!)} al {dayLabel(days[6]!)} · {weekVisits} visitas a estaciones{weekOther ? ` · ${weekOther} otras actividades` : ''}</p>
       {!active.length ? <div className="card empty">Primero crea brigadas.</div> : (
         <div className="cal" style={{ gridTemplateColumns: `180px repeat(7, minmax(120px, 1fr))` }}>
           <div className="cal-head" />
@@ -75,7 +83,12 @@ export function SchedulePage() {
               <div className="cal-brig">{b.name}<small>{b.specialtyName ?? 'Mixta'}</small></div>
               {days.map((d) => (
                 <div key={d} className="cal-cell">
-                  {cell(b.id, d).map((s) => (
+                  {cell(b.id, d).map((s) => !s.stationId ? (
+                    <span key={s.id} className="act-chip" title={[ACTIVITY_TYPE_LABELS[s.activityType ?? 'otro'], s.detail].filter(Boolean).join(': ')}>
+                      <strong>{ACTIVITY_TYPE_LABELS[s.activityType ?? 'otro']}</strong>
+                      {s.detail && <span>{s.detail}</span>}
+                    </span>
+                  ) : (
                     <span key={s.id} className={'st-chip' + (s.status !== 'planificada' ? ' done' : '')} title={`${STATUS_LABEL[s.status]}${s.originalDate !== s.plannedDate ? ` · original ${s.originalDate}` : ''}`}>
                       {s.stationCode}
                       {isAdmin && s.status === 'planificada' && <button aria-label={`Quitar ${s.stationCode}`} onClick={() => remove.mutate(s.id)}>×</button>}
@@ -94,7 +107,7 @@ export function SchedulePage() {
           brigade={adding.brigade}
           date={adding.date}
           stations={stations.data ?? []}
-          already={new Set(cell(adding.brigade.id, adding.date).map((s) => s.stationId))}
+          already={new Set(cell(adding.brigade.id, adding.date).flatMap((s) => (s.stationId ? [s.stationId] : [])))}
           onClose={() => setAdding(null)}
           onSaved={() => { setAdding(null); qc.invalidateQueries({ queryKey: ['schedules'] }); qc.invalidateQueries({ queryKey: ['stations'] }); }}
         />

@@ -35,6 +35,7 @@ const NAV: { title?: string; items: Item[] }[] = [
   {
     title: 'Planificación',
     items: [
+      { to: '/carga-masiva', label: 'Carga masiva', roles: ADMIN_ROLES },
       { to: '/cronograma', label: 'Cronograma', roles: VIEWERS },
       { to: '/estaciones', label: 'Estaciones', roles: VIEWERS },
       { to: '/capas', label: 'Mapa y capas', roles: VIEWERS },

@@ -78,12 +78,7 @@ function walk(node: Root | Folder, path: string[], out: ParsedFeature[]) {
 
 export type ParsedKml = { title: string | null; features: ParsedFeature[] };
 
-/** Lee un .kmz o .kml y devuelve sus elementos con el tipo sugerido. */
-export async function parseKmlFile(file: File): Promise<ParsedFeature[]> {
-  return (await parseKmlDocument(file)).features;
-}
-
-/** Igual que parseKmlFile, más el nombre del documento (raíz del árbol de capas). */
+/** Lee un .kmz o .kml: sus elementos con el tipo sugerido y el nombre del documento (raíz del árbol de capas). */
 export async function parseKmlDocument(file: File): Promise<ParsedKml> {
   let text: string;
   if (/\.kmz$/i.test(file.name)) {

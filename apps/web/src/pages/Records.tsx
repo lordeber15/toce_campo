@@ -13,6 +13,7 @@ import { MapView } from '../components/MapView';
 import { useAuth } from '../lib/auth';
 import { useProject } from '../lib/project';
 import { ErrorBox, NoProject } from '../components/Dialog';
+import { BrigadeSelect, DateRange } from '../components/Filters';
 
 const STATUS_CHIP: Record<ExecutionStatus, string> = {
   en_curso: 'chip chip-warn', fotos_ok: 'chip chip-warn', completada: 'chip chip-ok', no_realizada: 'chip chip-off',
@@ -85,15 +86,10 @@ export function RecordsPage() {
           <Select label="Especialidad" value={filters.specialtyId} onChange={(v) => set('specialtyId', v)} options={(o?.specialties ?? []).map((s) => [s.id, s.name])} />
           <Select label="Método" value={filters.methodId} onChange={(v) => set('methodId', v)} options={methods.map((m) => [m.id, `${m.code} · ${m.name}`])} />
           <Select label="Estación" value={filters.stationId} onChange={(v) => set('stationId', v)} options={(o?.stations ?? []).map((s) => [s.id, s.code])} />
-          <Select label="Brigada" value={filters.brigadeId} onChange={(v) => set('brigadeId', v)} options={(o?.brigades ?? []).map((b) => [b.id, b.name])} />
+          <BrigadeSelect value={filters.brigadeId ?? ''} onChange={(v) => set('brigadeId', v)} brigades={o?.brigades ?? []} allLabel="Brigada: todos" style={{ maxWidth: 200 }} />
           <Select label="Especialista" value={filters.specialistId} onChange={(v) => set('specialistId', v)} options={(o?.specialists ?? []).map((s) => [s.id, s.name])} />
           <Select label="Estado" value={filters.status} onChange={(v) => set('status', v)} options={EXECUTION_STATUSES.map((s) => [s, EXECUTION_STATUS_LABELS[s]])} />
-          <label className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            Desde <input className="input" type="date" value={filters.from ?? ''} onChange={(e) => set('from', e.target.value)} style={{ width: 150 }} />
-          </label>
-          <label className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            Hasta <input className="input" type="date" value={filters.to ?? ''} onChange={(e) => set('to', e.target.value)} style={{ width: 150 }} />
-          </label>
+          <DateRange from={filters.from ?? ''} to={filters.to ?? ''} onFrom={(v) => set('from', v)} onTo={(v) => set('to', v)} />
           {active && <button className="btn btn-sm" onClick={() => { setText(''); setParams({}, { replace: true }); }}>Quitar filtros</button>}
         </div>
         <ErrorBox error={list.error ?? options.error} />

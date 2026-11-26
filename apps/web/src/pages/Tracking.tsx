@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router';
+import { useNavigate } from 'react-router';
 import { BRIGADE_FLAG_LABELS, type BrigadeFlag, type BrigadeTracking, type ProjectTracking, type TrackingMetrics } from '@toce/shared';
 import { api } from '../lib/api';
 import { useProject } from '../lib/project';
 import { ErrorBox, NoProject } from '../components/Dialog';
+import { StatTile } from '../components/StatTile';
 import { ProgressBar, ProgressChart } from '../components/ProgressChart';
 
 export const FLAG_CHIP: Record<BrigadeFlag, string> = { al_dia: 'chip chip-ok', en_riesgo: 'chip chip-warn', atrasada: 'chip chip-off', sin_programacion: 'chip' };
@@ -28,34 +29,23 @@ export function since(iso: string | null): { text: string; stale: boolean } {
 export function MetricTiles({ m, brigades, links = true }: { m: TrackingMetrics; brigades?: number; links?: boolean }) {
   return (
     <div className="stats" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(165px, 1fr))', marginBottom: 16 }}>
-      {brigades != null && <Tile label="Brigadas" value={`${brigades}`} />}
-      <Tile label="Estaciones ejecutadas" value={`${m.stationsExecuted}/${m.stationsPlanned}`} hint={`${m.stationsDue} programadas a la fecha`} />
-      <Tile label="Unidades completadas" value={`${m.unitsDone}/${m.unitsRequired}`} hint={m.unitsNotDone ? `${m.unitsNotDone} no realizadas` : 'unidades de muestreo'} />
-      <Tile label="Avance" value={pctText(m.progressPct)} hint="sobre todo lo programado" />
-      <Tile label="Cumplimiento a la fecha" value={pctText(m.compliancePct)} hint="sobre lo programado hasta hoy" warn={m.compliancePct != null && m.compliancePct < 80} />
-      <Tile
+      {brigades != null && <StatTile label="Brigadas" value={`${brigades}`} />}
+      <StatTile label="Estaciones ejecutadas" value={`${m.stationsExecuted}/${m.stationsPlanned}`} hint={`${m.stationsDue} programadas a la fecha`} />
+      <StatTile label="Unidades completadas" value={`${m.unitsDone}/${m.unitsRequired}`} hint={m.unitsNotDone ? `${m.unitsNotDone} no realizadas` : 'unidades de muestreo'} />
+      <StatTile label="Avance" value={pctText(m.progressPct)} hint="sobre todo lo programado" />
+      <StatTile label="Cumplimiento a la fecha" value={pctText(m.compliancePct)} hint="sobre lo programado hasta hoy" warn={m.compliancePct != null && m.compliancePct < 80} />
+      <StatTile
         label="Desviación del cronograma"
         value={pctText(m.deviationPct)}
         hint={`${m.offDateUnits} de ${m.executedUnits} fuera de fecha${m.rescheduledUnits ? ` · ${m.rescheduledUnits} en fecha reprogramada` : ''}`}
         warn={(m.deviationPct ?? 0) > 10}
       />
-      <Tile label="Estaciones atrasadas" value={`${m.stationsLate}`} warn={m.stationsLate > 0} hint="fecha vencida sin cerrar" />
-      <Tile label="Alertas activas" value={`${m.activeAlerts}`} warn={m.activeAlerts > 0} link={links ? '/alertas' : undefined} />
-      <Tile label="Alertas críticas" value={`${m.criticalAlerts}`} warn={m.criticalAlerts > 0} hint="marcadas, sin cerrar" link={links ? '/alertas?critica=1' : undefined} />
-      <Tile label="Reprogramaciones pendientes" value={`${m.pendingReschedules}`} warn={m.pendingReschedules > 0} hint="por aprobar o sin nueva fecha" link={links ? '/reprogramaciones' : undefined} />
+      <StatTile label="Estaciones atrasadas" value={`${m.stationsLate}`} warn={m.stationsLate > 0} hint="fecha vencida sin cerrar" />
+      <StatTile label="Alertas activas" value={`${m.activeAlerts}`} warn={m.activeAlerts > 0} link={links ? '/alertas' : undefined} />
+      <StatTile label="Alertas críticas" value={`${m.criticalAlerts}`} warn={m.criticalAlerts > 0} hint="marcadas, sin cerrar" link={links ? '/alertas?critica=1' : undefined} />
+      <StatTile label="Reprogramaciones pendientes" value={`${m.pendingReschedules}`} warn={m.pendingReschedules > 0} hint="por aprobar o sin nueva fecha" link={links ? '/reprogramaciones' : undefined} />
     </div>
   );
-}
-
-function Tile({ label, value, hint, warn, link }: { label: string; value: string; hint?: string; warn?: boolean; link?: string }) {
-  const body = (
-    <>
-      <div className="label">{label}</div>
-      <div className="value" style={{ color: warn ? 'var(--danger)' : undefined }}>{value}</div>
-      {hint && <div className="hint">{hint}</div>}
-    </>
-  );
-  return link ? <Link to={link} className="card stat" style={{ color: 'inherit', textDecoration: 'none' }}>{body}</Link> : <div className="card stat">{body}</div>;
 }
 
 /** Dashboard de seguimiento: indicadores del proyecto, curva de avance y brigadas ordenadas por atraso. */

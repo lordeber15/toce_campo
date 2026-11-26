@@ -9,6 +9,8 @@ import { api } from '../lib/api';
 import { MediaViewer } from '../components/MediaViewer';
 import { useProject } from '../lib/project';
 import { ErrorBox, NoProject } from '../components/Dialog';
+import { BrigadeSelect } from '../components/Filters';
+import { StatTile } from '../components/StatTile';
 
 type FileRef = { id: string; kind: string; uploaded: boolean };
 type Rec<E extends LogisticsEntity> = {
@@ -61,20 +63,18 @@ export function LogisticsPage() {
         </div>
       </div>
       <div className="stats" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', marginBottom: 16 }}>
-        <Stat label="Movilidades" value={`${vehicles.filter((r) => r.data.status === 'llegada').length}/${vehicles.length}`} hint={badVeh ? `${badVeh} con problema` : 'llegaron'} warn={badVeh > 0} />
-        <Stat label="Apoyos disponibles" value={`${support.filter((r) => r.data.isAvailable).length}`} hint={`de ${support.length} registrados`} />
-        <Stat label="Viáticos" value={money(total)} hint={[noReceipt ? `${noReceipt} sin comprobante` : `${expenses.length} gastos`, tolls ? `peajes ${money(tolls)}` : ''].filter(Boolean).join(' · ')} warn={noReceipt > 0} />
-        <Stat label="Muestras por enviar" value={`${pending}`} hint={`${samples.length} registradas`} warn={pending > 0} />
-        <Stat label="Equipos con problemas" value={`${badEquip}`} hint={`${equipment.length} registrados`} warn={badEquip > 0} />
-        <Stat label="Recepción de materiales" value={`${toReceive}`} hint={`por recibir${incomplete ? ` · ${incomplete} incompletos` : ''}`} warn={incomplete > 0} />
+        <StatTile warnHint label="Movilidades" value={`${vehicles.filter((r) => r.data.status === 'llegada').length}/${vehicles.length}`} hint={badVeh ? `${badVeh} con problema` : 'llegaron'} warn={badVeh > 0} />
+        <StatTile warnHint label="Apoyos disponibles" value={`${support.filter((r) => r.data.isAvailable).length}`} hint={`de ${support.length} registrados`} />
+        <StatTile warnHint label="Viáticos" value={money(total)} hint={[noReceipt ? `${noReceipt} sin comprobante` : `${expenses.length} gastos`, tolls ? `peajes ${money(tolls)}` : ''].filter(Boolean).join(' · ')} warn={noReceipt > 0} />
+        <StatTile warnHint label="Muestras por enviar" value={`${pending}`} hint={`${samples.length} registradas`} warn={pending > 0} />
+        <StatTile warnHint label="Equipos con problemas" value={`${badEquip}`} hint={`${equipment.length} registrados`} warn={badEquip > 0} />
+        <StatTile warnHint label="Recepción de materiales" value={`${toReceive}`} hint={`por recibir${incomplete ? ` · ${incomplete} incompletos` : ''}`} warn={incomplete > 0} />
       </div>
 
       <div className="card">
         <div className="toolbar">
-          <select className="input" value={brigade} onChange={(e) => setBrigade(e.target.value)} aria-label="Brigada">
-            <option value="">Todas las brigadas</option>
-            {brigades.map((b) => <option key={b} value={b}>{b}</option>)}
-          </select>
+          {/* Por nombre: los registros de logística traen el nombre de la brigada. */}
+          <BrigadeSelect value={brigade} onChange={setBrigade} brigades={brigades.map((b) => ({ id: b, name: b }))} />
         </div>
         <div className="tabs" role="tablist" style={{ padding: '0 12px', marginBottom: 0 }}>
           {LOGISTICS_ENTITIES.map((e) => (
@@ -186,16 +186,6 @@ export function LogisticsPage() {
         )}
       </div>
     </>
-  );
-}
-
-function Stat({ label, value, hint, warn }: { label: string; value: string; hint: string; warn?: boolean }) {
-  return (
-    <div className="card stat">
-      <div className="label">{label}</div>
-      <div className="value">{value}</div>
-      <div className="hint" style={{ color: warn ? 'var(--warn)' : undefined }}>{hint}</div>
-    </div>
   );
 }
 

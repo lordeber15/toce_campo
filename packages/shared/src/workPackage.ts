@@ -17,9 +17,19 @@ export type WpProject = {
   code: string;
   name: string;
   utmZone: number | null;
-  /** [oeste, sur, este, norte] de estaciones y capas; zona del mapa offline. */
+  /**
+   * [oeste, sur, este, norte] de la zona de trabajo del usuario en el proyecto: la unión de los `bounds`
+   * de sus brigadas (ya no todo el proyecto). Sirve para encuadrar el mapa. Paquetes antiguos traen el
+   * extent del proyecto completo; las apps viejas descargan el mapa offline con esta caja.
+   */
   bounds: [number, number, number, number] | null;
 };
+
+/** Caja [oeste, sur, este, norte] en grados WGS84. */
+export type WpBounds = [number, number, number, number];
+
+/** Margen (grados, ~4 km) que se agrega alrededor de la zona de una brigada para el mapa offline y el recorte de capas. */
+export const WORK_AREA_MARGIN_DEG = 0.04;
 
 /** Geometría GeoJSON (WGS84). */
 export type WpGeometry =
@@ -37,11 +47,18 @@ export type WpLayer = {
   code: string | null;
   color: string | null;
   geometry: WpGeometry;
+  /**
+   * Brigada dueña de la capa (KMZ de la brigada). null/undefined = capa general del proyecto, ya recortada
+   * a la zona de las brigadas del usuario. Paquetes antiguos no lo traen.
+   */
+  brigadeId?: string | null;
 };
 
 export type WpBrigade = {
   id: string;
   projectId: string;
+  /** Código corto (SIERRA 1); paquetes antiguos no lo traen. */
+  code?: string | null;
   name: string;
   specialtyCode: string | null;
   specialtyName: string | null;
@@ -52,6 +69,14 @@ export type WpBrigade = {
   /** Polígono de trabajo asignado a la brigada (KMZ), simplificado. null si no se cargó. */
   areaName: string | null;
   area: WpGeometry | null;
+  /**
+   * Zona de trabajo de la brigada (sin margen): extent de sus capas KMZ o, si no tiene, de sus estaciones
+   * (programadas o con métodos asignados a la brigada). El teléfono descarga un mapa offline por brigada con
+   * esta caja + WORK_AREA_MARGIN_DEG. null = sin zona. Paquetes antiguos no lo traen (undefined).
+   */
+  bounds?: WpBounds | null;
+  /** De dónde salió `bounds`: 'kmz' (capas de la brigada) o 'estaciones'. */
+  boundsSource?: 'kmz' | 'estaciones' | null;
 };
 
 export type WpSchedule = {
@@ -99,9 +124,25 @@ export type WpMethod = {
   methodPhotoRequired: boolean;
   methodPhotoInstructions: string | null;
   formSchema: FormSchema;
+  /** Datos de la plantilla de carga masiva (paquetes antiguos no los traen). */
+  methodClass?: 'todas' | 'condicional' | 'evento' | 'atributo' | 'transversal' | null;
+  requiresTrack?: boolean;
+  photosPerUnit?: number | null;
+  scheduleText?: string | null;
+  /** Directriz compacta (condición de aplicación). */
+  guideline?: string | null;
+  specialtyName?: string;
 };
 
-export type WpStationMethod = { id: string; stationId: string; methodId: string; unitsRequired: number; notes: string | null };
+export type WpStationMethod = {
+  id: string;
+  stationId: string;
+  methodId: string;
+  unitsRequired: number;
+  notes: string | null;
+  /** Brigada que ejecuta el método en la estación (null = cualquiera). Paquetes antiguos no lo traen. */
+  brigadeId?: string | null;
+};
 
 export type WpUnit = { id: string; stationMethodId: string; stationId: string; methodId: string; seq: number; code: string; status: string };
 

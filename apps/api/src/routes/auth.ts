@@ -25,6 +25,7 @@ const auth: FastifyPluginAsync = async (app) => {
         specialtyId: users.specialtyId,
         specialtyCode: specialties.code,
         isActive: users.isActive,
+        mustChangePassword: users.mustChangePassword,
       })
       .from(users)
       .leftJoin(specialties, eq(users.specialtyId, specialties.id))

@@ -34,6 +34,7 @@ const PHOTO_COLOR = { inside: '#2F9E44', outside: '#E03131', unknown: '#868E96' 
 /** Recorridos de tracking: un color por EM. */
 const TRACK_PALETTE = ['#7048E8', '#1C7ED6', '#D6336C', '#0CA678', '#F08C00', '#495057'];
 const TRACK_COLOR = TRACK_PALETTE[0]!;
+const NO_BRIGADES: WpBrigade[] = [];
 
 /** Foto en el mapa: propia (guardada en el teléfono) o del equipo (supervisor, desde el servidor). */
 type MapPhoto =
@@ -54,10 +55,19 @@ export default function MapScreen() {
 
   const focus = stationParam ? index?.stations.get(stationParam) : undefined;
   const project = (focus ? index?.projects.get(focus.projectId) : undefined) ?? index?.pkg.projects[0];
-  const basemap = useBasemap(project);
+  // Mapa offline: un paquete por brigada del usuario (su KMZ o sus estaciones), no todo el proyecto.
+  const basemap = useBasemap(project, index?.pkg.brigades ?? NO_BRIGADES);
+  // Todas las capas sirven para verificar el área; en el mapa se pueden ocultar las generales o las de la brigada.
   const layers = useMemo(() => (index?.pkg.layers ?? []).filter((l) => l.projectId === project?.id) ?? [], [index, project?.id]);
-  const kinds = useMemo(() => KIND_ORDER.filter((k) => layers.some((l) => l.kind === k)), [layers]);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
+  // brigadeId: paquetes antiguos no lo traen (todo cuenta como general).
+  const hasBrigadeKmz = layers.some((l) => l.brigadeId);
+  const hasGeneral = layers.some((l) => !l.brigadeId);
+  const drawn = useMemo(
+    () => layers.filter((l) => !hidden.has(l.brigadeId ? 'kmz-brigada' : 'kmz-general')),
+    [layers, hidden],
+  );
+  const kinds = useMemo(() => KIND_ORDER.filter((k) => drawn.some((l) => l.kind === k)), [drawn]);
   const [picked, setPicked] = useState<Picked | null>(focus ? { kind: 'station', station: focus } : null);
 
   const todayIds = useMemo(() => new Set(index?.pkg.schedules.filter((s) => s.plannedDate === today).map((s) => s.stationId)), [index, today]);
@@ -66,14 +76,14 @@ export default function MapScreen() {
   const layerData = useMemo(() => {
     const by: Partial<Record<LayerKind, GeoJSON.FeatureCollection>> = {};
     let uvi = 0;
-    for (const l of layers) {
+    for (const l of drawn) {
       const color = l.color || (l.kind === 'uv' ? UV_PALETTE[uvi++ % UV_PALETTE.length]! : KIND[l.kind].color);
       (by[l.kind] ??= { type: 'FeatureCollection', features: [] }).features.push({
         type: 'Feature', id: l.id, properties: { name: l.name, color }, geometry: l.geometry as GeoJSON.Geometry,
       });
     }
     return by;
-  }, [layers]);
+  }, [drawn]);
 
   // Brigadas del usuario en este proyecto (y sus polígonos de trabajo).
   const myBrigades = useMemo(() => index?.pkg.brigades.filter((b) => b.projectId === project?.id) ?? [], [index, project?.id]);
@@ -341,6 +351,10 @@ export default function MapScreen() {
           ...(tracks.length ? [{ key: 'tracking', label: `Mi tracking (${new Set(tracks.map((x) => x.stationId)).size} EM)`, color: TRACK_COLOR }] : []),
           ...(mine.length ? [{ key: 'mis-fotos', label: `Mis fotos (${mine.length})`, color: PHOTO_COLOR.inside }] : []),
           ...(supervised.length ? [{ key: 'fotos-equipo', label: `Fotos de mis brigadas (${team.length})`, color: '#1C7ED6' }] : []),
+          ...(hasBrigadeKmz && hasGeneral ? [
+            { key: 'kmz-brigada', label: 'KMZ de mi brigada', color: AREA_COLOR },
+            { key: 'kmz-general', label: 'Capas generales', color: KIND.otro.color },
+          ] : []),
           ...kinds.map((k) => ({ key: k as string, label: KIND[k].label, color: KIND[k].color })),
           { key: 'estaciones', label: 'Estaciones', color: colors.primary },
         ].map((c) => {
@@ -365,7 +379,7 @@ export default function MapScreen() {
         >
           <Text style={[s.fabText, !me && { opacity: 0.35 }]}>◎</Text>
         </Pressable>
-        <Pressable style={s.fab} onPress={fit} accessibilityRole="button" accessibilityLabel="Ver todo el proyecto">
+        <Pressable style={s.fab} onPress={fit} accessibilityRole="button" accessibilityLabel="Ver toda mi zona de trabajo">
           <Text style={s.fabText}>⤢</Text>
         </Pressable>
       </View>
@@ -529,8 +543,16 @@ function PointPanel({ lat, lng, me, layers, onClose }: {
 function OfflineRow({ basemap, online }: { basemap: ReturnType<typeof useBasemap>; online: boolean }) {
   const st = basemap.state;
   if (st.status === 'checking') return null;
+  const notes = basemap.notes.length > 0 && (
+    <Text style={[s.hint, { color: colors.warn }]}>{basemap.notes.join('\n')}</Text>
+  );
+  const what = basemap.zones.length > 1 ? `de tus ${basemap.zones.length} zonas de brigada` : 'de tu brigada';
+  if (!basemap.zones.some((z) => !z.tooBig)) {
+    return <View style={[s.offline, { backgroundColor: '#FFF4E0' }]}>{notes || <Text style={s.offlineText}>Sin zona para el mapa offline.</Text>}</View>;
+  }
   if (st.status === 'complete') {
     return (
+      <View style={{ gap: 4 }}>
       <View style={[s.offline, s.offlineOk]}>
         <Text style={[s.offlineText, { color: colors.primary }]}>Mapa disponible sin conexión · {formatMb(st.bytes)}</Text>
         {online && (
@@ -539,28 +561,33 @@ function OfflineRow({ basemap, online }: { basemap: ReturnType<typeof useBasemap
           </Pressable>
         )}
       </View>
+      {notes}
+      </View>
     );
   }
   if (st.status === 'downloading') {
     return (
       <View style={[s.offline, { flexDirection: 'column', alignItems: 'stretch', gap: 6 }]}>
-        <Text style={s.offlineText}>Descargando mapa del proyecto… {st.percent}% · {formatMb(st.bytes)}</Text>
+        <Text style={s.offlineText}>Descargando mapa {what}… {st.percent}% · {formatMb(st.bytes)}</Text>
         <View style={s.track}><View style={[s.fill, { width: `${st.percent}%` }]} /></View>
       </View>
     );
   }
   return (
-    <View style={[s.offline, { backgroundColor: '#FFF4E0' }]}>
-      <Text style={[s.offlineText, { color: colors.warn, flex: 1 }]}>
-        {st.status === 'error'
-          ? `No se completó la descarga: ${st.message}`
-          : online ? 'El mapa aún no está guardado para usarlo sin conexión.' : 'Sin conexión: el mapa base no está descargado (las capas sí se ven).'}
-      </Text>
-      {online && (
-        <Pressable onPress={() => void basemap.download()} hitSlop={8} accessibilityRole="button">
-          <Text style={[s.offlineAction, { color: colors.warn }]}>{st.status === 'error' ? 'Reintentar' : 'Descargar'}</Text>
-        </Pressable>
-      )}
+    <View style={{ gap: 4 }}>
+      <View style={[s.offline, { backgroundColor: '#FFF4E0' }]}>
+        <Text style={[s.offlineText, { color: colors.warn, flex: 1 }]}>
+          {st.status === 'error'
+            ? `No se completó la descarga: ${st.message}`
+            : online ? `El mapa ${what} aún no está guardado para usarlo sin conexión.` : 'Sin conexión: el mapa base no está descargado (las capas sí se ven).'}
+        </Text>
+        {online && (
+          <Pressable onPress={() => void basemap.download()} hitSlop={8} accessibilityRole="button">
+            <Text style={[s.offlineAction, { color: colors.warn }]}>{st.status === 'error' ? 'Reintentar' : 'Descargar'}</Text>
+          </Pressable>
+        )}
+      </View>
+      {notes}
     </View>
   );
 }

@@ -6,9 +6,8 @@ import { TRACK_MIN_SECONDS, formatTrackDuration, formatUtm, latLngToUtm, type Tr
 import { api } from '../lib/api';
 import { useProject } from '../lib/project';
 import { ErrorBox, NoProject } from '../components/Dialog';
+import { BrigadeSelect, DateRange } from '../components/Filters';
 import { BRIGADE_AREA_COLOR, MapView, type MapTrack } from '../components/MapView';
-
-type BrigadeOpt = { id: string; name: string };
 
 const PALETTE = ['#7048E8', '#1C7ED6', '#D6336C', '#0CA678', '#F08C00', '#495057', '#AE3EC9', '#E8590C'];
 const when = (iso: string) =>
@@ -30,7 +29,6 @@ export function GpsTracksPage() {
     setSelected(null);
   };
 
-  const brigades = useQuery({ queryKey: ['brigades', project?.id], enabled: !!project, queryFn: () => api<BrigadeOpt[]>(`/projects/${project!.id}/brigades`) });
   const areas = useQuery({ queryKey: ['brigade-areas', project?.id], enabled: !!project, queryFn: () => api<FeatureCollection>(`/projects/${project!.id}/brigade-areas`) });
   const tracks = useQuery({
     queryKey: ['gps-tracks', project?.id, filters],
@@ -75,16 +73,8 @@ export function GpsTracksPage() {
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="toolbar">
-          <select className="input" value={filters.brigadeId ?? ''} onChange={(e) => set('brigadeId', e.target.value)} aria-label="Brigada" style={{ maxWidth: 220 }}>
-            <option value="">Brigada: todas</option>
-            {(brigades.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
-          <label className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            Desde <input className="input" type="date" value={filters.from ?? ''} onChange={(e) => set('from', e.target.value)} style={{ width: 150 }} />
-          </label>
-          <label className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            Hasta <input className="input" type="date" value={filters.to ?? ''} onChange={(e) => set('to', e.target.value)} style={{ width: 150 }} />
-          </label>
+          <BrigadeSelect value={filters.brigadeId ?? ''} onChange={(v) => set('brigadeId', v)} projectId={project.id} allLabel="Brigada: todas" style={{ maxWidth: 220 }} />
+          <DateRange from={filters.from ?? ''} to={filters.to ?? ''} onFrom={(v) => set('from', v)} onTo={(v) => set('to', v)} />
           {Object.keys(filters).length > 0 && <button className="btn btn-sm" onClick={() => { setParams({}, { replace: true }); setSelected(null); }}>Quitar filtros</button>}
         </div>
         <ErrorBox error={tracks.error ?? areas.error} />

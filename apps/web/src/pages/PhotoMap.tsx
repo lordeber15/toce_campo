@@ -6,10 +6,9 @@ import { formatUtm, latLngToUtm, type PhotoMapPoint } from '@toce/shared';
 import { api } from '../lib/api';
 import { useProject } from '../lib/project';
 import { ErrorBox, NoProject } from '../components/Dialog';
+import { BrigadeSelect, DateRange, useBrigades } from '../components/Filters';
 import { BRIGADE_AREA_COLOR, MapView, PHOTO_COLORS, type MapPhoto } from '../components/MapView';
 import { MediaViewer } from '../components/MediaViewer';
-
-type BrigadeOpt = { id: string; name: string; isActive: boolean; areaHa: number | null };
 
 const when = (iso: string) =>
   new Date(iso).toLocaleString('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
@@ -35,7 +34,7 @@ export function PhotoMapPage() {
     setSelected(null);
   };
 
-  const brigades = useQuery({ queryKey: ['brigades', project?.id], enabled: !!project, queryFn: () => api<BrigadeOpt[]>(`/projects/${project!.id}/brigades`) });
+  const brigades = useBrigades(project?.id);
   const areas = useQuery({ queryKey: ['brigade-areas', project?.id], enabled: !!project, queryFn: () => api<FeatureCollection>(`/projects/${project!.id}/brigade-areas`) });
   const photos = useQuery({
     queryKey: ['photo-map', project?.id, filters],
@@ -76,16 +75,9 @@ export function PhotoMapPage() {
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="toolbar">
-          <select className="input" value={filters.brigadeId ?? ''} onChange={(e) => set('brigadeId', e.target.value)} aria-label="Brigada" style={{ maxWidth: 220 }}>
-            <option value="">Brigada: todas</option>
-            {(brigades.data ?? []).map((b) => <option key={b.id} value={b.id}>{b.name}{b.areaHa == null ? ' (sin polígono)' : ''}</option>)}
-          </select>
-          <label className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            Desde <input className="input" type="date" value={filters.from ?? ''} onChange={(e) => set('from', e.target.value)} style={{ width: 150 }} />
-          </label>
-          <label className="hint" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            Hasta <input className="input" type="date" value={filters.to ?? ''} onChange={(e) => set('to', e.target.value)} style={{ width: 150 }} />
-          </label>
+          <BrigadeSelect value={filters.brigadeId ?? ''} onChange={(v) => set('brigadeId', v)} brigades={brigades.data ?? []} allLabel="Brigada: todas"
+            optionLabel={(b) => `${b.name}${b.areaHa == null ? ' (sin polígono)' : ''}`} style={{ maxWidth: 220 }} />
+          <DateRange from={filters.from ?? ''} to={filters.to ?? ''} onFrom={(v) => set('from', v)} onTo={(v) => set('to', v)} />
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 14 }}>
             <input type="checkbox" checked={!!filters.outside} onChange={(e) => set('outside', e.target.checked ? '1' : '')} /> Solo fuera del polígono
           </label>

@@ -93,7 +93,7 @@ type Props = {
   /** Hojas que aún se están descargando. */
   loading?: Set<string>;
   brigades?: { id: string; name: string }[];
-  /** Solo administradores: cambiar tipo / brigada, borrar un KMZ. */
+  /** Solo administradores: cambiar tipo, marcar el KMZ como general o asignarlo a una brigada, borrarlo. */
   admin?: {
     setKind: (sourceFile: string | null, folderPath: string[], kind: string) => void;
     setBrigade: (sourceFile: string | null, brigadeId: string | null) => void;
@@ -148,8 +148,8 @@ export function LayerTree({ leaves, visible, onToggle, loading, brigades = [], a
               <>
                 <select className="input" value={n.root.brigadeId ?? ''} aria-label={`Brigada de ${n.label}`}
                   onChange={(e) => admin.setBrigade(n.sourceFile, e.target.value || null)}>
-                  <option value="">Todo el proyecto</option>
-                  {brigades.map((b) => <option key={b.id} value={b.id}>Brigada {b.name}</option>)}
+                  <option value="">General (todo el proyecto)</option>
+                  {brigades.map((b) => <option key={b.id} value={b.id}>Zona de la brigada {b.name}</option>)}
                 </select>
                 <button type="button" className="btn btn-sm" onClick={() => admin.remove(n.sourceFile, n.label)}>Eliminar KMZ</button>
               </>

@@ -1,16 +1,22 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ADMIN_ROLES, type FormField, type FormFieldType, type PhotoSlot } from '@toce/shared';
+import { ADMIN_ROLES, METHOD_CLASSES, type FormField, type FormFieldType, type MethodClass, type PhotoSlot } from '@toce/shared';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { Dialog, ErrorBox } from '../components/Dialog';
 
-type Specialty = { id: string; code: string; name: string };
+type Specialty = { id: string; code: string; name: string; grantIds: string[] };
 type Method = {
   id: string; specialtyId: string; code: string; name: string; description: string | null; instructions: string | null;
   isOpenEnded: boolean; defaultUnitsRequired: number; scheduleStart: string | null; scheduleEnd: string | null; minDurationMin: number | null;
   requirements: string[]; photoSlots: PhotoSlot[]; methodPhotoRequired: boolean; methodPhotoInstructions: string | null;
   formSchema: { fields: FormField[] }; isActive: boolean; stationCount: number;
+  methodClass: MethodClass | null; requiresTrack: boolean; photosPerUnit: number | null; scheduleText: string | null; guideline: string | null;
+};
+
+const CLASS_LABELS: Record<MethodClass, string> = {
+  todas: 'TODAS (todas las estaciones)', condicional: 'CONDICIONAL (según la estación)', evento: 'EVENTO (unidades abiertas)',
+  atributo: 'ATRIBUTO (dato de la estación)', transversal: 'TRANSVERSAL (varias especialidades)',
 };
 
 const TYPES: Record<FormFieldType, string> = {
@@ -39,18 +45,21 @@ export function MethodsPage() {
         <div><h1>Métodos y formularios</h1><p>Lo que ve cada especialista en campo: unidades, fotos requeridas y campos del formulario reducido.</p></div>
         {isAdmin && spec && <button className="btn btn-primary" onClick={() => setCreating(true)}>Nuevo método</button>}
       </div>
-      <div className="tabs" role="tablist">
-        {(specialties.data ?? []).map((s) => (
-          <button key={s.id} role="tab" aria-selected={s.id === spec} onClick={() => { setSpecId(s.id); setMethodId(null); }}>{s.name}</button>
-        ))}
-      </div>
-      <div className="split" style={{ gridTemplateColumns: 'minmax(220px, 300px) 1fr' }}>
+      <SpecialtyBar
+        specialties={specialties.data ?? []}
+        value={spec}
+        onChange={(id) => { setSpecId(id); setMethodId(null); }}
+        isAdmin={isAdmin}
+      />
+      <div className="split" style={{ '--split-cols': 'minmax(220px, 300px) 1fr' } as React.CSSProperties}>
         <div className="card list">
           {(methods.data ?? []).map((m) => (
             <button key={m.id} className="list-item" aria-current={m.id === current?.id} onClick={() => setMethodId(m.id)}>
               <div className="grow">
                 <strong>{m.code}</strong> {m.name}
-                <small>{m.isOpenEnded ? 'Unidades abiertas' : `${m.defaultUnitsRequired} unidades por defecto`} · {m.formSchema.fields.length} campos · {m.stationCount} estaciones</small>
+                <small>
+                  {m.methodClass ? `${m.methodClass.toUpperCase()} · ` : ''}{m.isOpenEnded ? 'Unidades abiertas' : `${m.defaultUnitsRequired} unidades por defecto`} · {m.formSchema.fields.length} campos · {m.stationCount} estaciones{m.requiresTrack ? ' · con track' : ''}
+                </small>
               </div>
               {!m.isActive && <span className="chip chip-off">Inactivo</span>}
             </button>
@@ -81,6 +90,8 @@ function MethodEditor({ method, readOnly }: { method: Method; readOnly: boolean 
           minDurationMin: m.minDurationMin, requirements: m.requirements.filter(Boolean), photoSlots: m.photoSlots,
           methodPhotoRequired: m.methodPhotoRequired, methodPhotoInstructions: m.methodPhotoInstructions || null,
           formSchema: m.formSchema, isActive: m.isActive,
+          methodClass: m.methodClass, requiresTrack: m.requiresTrack, photosPerUnit: m.photosPerUnit,
+          scheduleText: m.scheduleText?.trim() || null, guideline: m.guideline?.trim() || null,
         }),
       }),
     onSuccess: () => { setDirty(false); setSaved(true); qc.invalidateQueries({ queryKey: ['methods-admin'] }); qc.invalidateQueries({ queryKey: ['methods'] }); },
@@ -125,10 +136,26 @@ function MethodEditor({ method, readOnly }: { method: Method; readOnly: boolean 
         </div>
       </div>
       <div className="grid-3">
+        <div className="field">
+          <label htmlFor="m-class">Clase</label>
+          <select id="m-class" className="input" value={m.methodClass ?? ''} onChange={(e) => upd({ methodClass: (e.target.value || null) as MethodClass | null })}>
+            <option value="">Sin clase</option>
+            {METHOD_CLASSES.map((c) => <option key={c} value={c}>{CLASS_LABELS[c]}</option>)}
+          </select>
+        </div>
+        <div className="field"><label htmlFor="m-ppu">Fotos por unidad</label><input id="m-ppu" type="number" min={0} max={100} className="input" value={m.photosPerUnit ?? ''} onChange={(e) => upd({ photosPerUnit: e.target.value ? Math.max(0, Number(e.target.value) || 0) : null })} /></div>
+        <div className="field">
+          <span className="label" style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-2)' }}>Recorrido GPS</span>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', minHeight: 40 }}><input type="checkbox" checked={m.requiresTrack} onChange={(e) => upd({ requiresTrack: e.target.checked })} /> Se ejecuta con track</label>
+        </div>
+      </div>
+      <div className="grid-3">
         <div className="field"><label htmlFor="m-hs">Horario desde</label><input id="m-hs" type="time" className="input" value={m.scheduleStart?.slice(0, 5) ?? ''} onChange={(e) => upd({ scheduleStart: e.target.value || null })} /></div>
         <div className="field"><label htmlFor="m-he">Horario hasta</label><input id="m-he" type="time" className="input" value={m.scheduleEnd?.slice(0, 5) ?? ''} onChange={(e) => upd({ scheduleEnd: e.target.value || null })} /></div>
         <div className="field"><label htmlFor="m-dur">Duración mínima (min)</label><input id="m-dur" type="number" min={0} className="input" value={m.minDurationMin ?? ''} onChange={(e) => upd({ minDurationMin: e.target.value ? Number(e.target.value) : null })} /></div>
       </div>
+      <div className="field"><label htmlFor="m-htxt">Horario sugerido (texto)</label><input id="m-htxt" className="input" maxLength={500} value={m.scheduleText ?? ''} onChange={(e) => upd({ scheduleText: e.target.value })} placeholder="06:00–10:00; 19:00–21:00" /></div>
+      <div className="field"><label htmlFor="m-guide">Directriz (condición de aplicación)</label><textarea id="m-guide" className="input" rows={4} maxLength={8000} value={m.guideline ?? ''} onChange={(e) => upd({ guideline: e.target.value })} /></div>
       <div className="field"><label htmlFor="m-ins">Instrucciones para el especialista</label><textarea id="m-ins" className="input" value={m.instructions ?? ''} onChange={(e) => upd({ instructions: e.target.value })} /></div>
       <div className="field">
         <label htmlFor="m-req">Requisitos obligatorios (uno por línea)</label>
@@ -182,6 +209,58 @@ function MethodEditor({ method, readOnly }: { method: Method; readOnly: boolean 
       </div>
       <p className="hint">Los registros ya guardados conservan sus datos aunque quites un campo.</p>
     </fieldset>
+  );
+}
+
+/**
+ * Elegir especialidad (son dinámicas: 13 o más, se muestran como pestañas que bajan de línea)
+ * y qué otras especialidades ve quien tiene la elegida (perfil botánico, Mamíferos, Fauna transversal...).
+ */
+function SpecialtyBar({ specialties, value, onChange, isAdmin }: {
+  specialties: Specialty[]; value: string | null; onChange: (id: string) => void; isAdmin: boolean;
+}) {
+  const current = specialties.find((s) => s.id === value) ?? null;
+  return (
+    <div className="card spec-bar">
+      <div className="tabs tabs-wrap" role="tablist" aria-label="Especialidad">
+        {specialties.map((s) => (
+          <button key={s.id} role="tab" aria-selected={s.id === value} onClick={() => onChange(s.id)}>{s.name}</button>
+        ))}
+      </div>
+      {current && <AccessEditor key={current.id + current.grantIds.join()} specialty={current} all={specialties} readOnly={!isAdmin} />}
+    </div>
+  );
+}
+
+function AccessEditor({ specialty, all, readOnly }: { specialty: Specialty; all: Specialty[]; readOnly: boolean }) {
+  const qc = useQueryClient();
+  const [sel, setSel] = useState<string[]>(specialty.grantIds);
+  const dirty = sel.length !== specialty.grantIds.length || sel.some((id) => !specialty.grantIds.includes(id));
+  const save = useMutation({
+    mutationFn: () => api(`/specialties/${specialty.id}`, { method: 'PATCH', body: JSON.stringify({ grantIds: sel }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['specialties'] }),
+  });
+  const others = all.filter((s) => s.id !== specialty.id);
+  const toggle = (id: string) => setSel(sel.includes(id) ? sel.filter((x) => x !== id) : [...sel, id]);
+  return (
+    <div className="spec-access">
+      <div className="spec-access-head">
+        <span className="section-title" style={{ margin: 0 }}>Quien es de {specialty.name} también ve</span>
+        <span className="hint">{sel.length ? `${sel.length} especialidad${sel.length === 1 ? '' : 'es'} más` : 'Solo la suya'}</span>
+        {!readOnly && (
+          <span style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
+            {dirty && <button type="button" className="btn btn-sm" onClick={() => setSel(specialty.grantIds)} disabled={save.isPending}>Descartar</button>}
+            <button type="button" className="btn btn-sm btn-primary" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>{save.isPending ? 'Guardando…' : 'Guardar accesos'}</button>
+          </span>
+        )}
+      </div>
+      <div className="pill-list">
+        {others.map((s) => (
+          <button key={s.id} type="button" className="pill" aria-pressed={sel.includes(s.id)} disabled={readOnly} onClick={() => toggle(s.id)}>{s.name}</button>
+        ))}
+      </div>
+      <ErrorBox error={save.error} />
+    </div>
   );
 }
 

@@ -8,6 +8,7 @@ import {
 import { schema } from '../db/index.js';
 import { audit } from '../lib/audit.js';
 import { classifyStations } from '../lib/geo.js';
+import { layerBrigades, syncBrigadeAreas } from '../lib/brigadeAreas.js';
 import { badRequest, conflict, idParam, isUniqueViolation, notFound } from '../lib/http.js';
 
 const { projects, projectLayers, brigades } = schema;
@@ -129,7 +130,9 @@ const projectsRoutes: FastifyPluginAsync = async (app) => {
     }
     const ids = await app.db.transaction(async (tx) => {
       let replaced = 0;
+      const affected: string[] = [brigadeId ?? ''];
       if (req.body.replaceSameSource && sourceFile) {
+        affected.push(...(await layerBrigades(tx, sql`project_id = ${projectId} AND source_file = ${sourceFile}`)));
         const old = await tx.execute(sql`SELECT id FROM project_layers WHERE project_id = ${projectId} AND source_file = ${sourceFile}`);
         replaced = old.rows.length;
         if (replaced) {
@@ -152,6 +155,8 @@ const projectsRoutes: FastifyPluginAsync = async (app) => {
         imported += res.rowCount ?? values.length;
       }
       await classifyStations(tx, projectId);
+      // El polígono de la brigada sale de sus capas: se recalcula (y con él, las fotos dentro/fuera).
+      await syncBrigadeAreas(tx, affected);
       await audit(req, 'project_layers', projectId, 'import', { after: { count: imported, replaced, sourceFile, brigadeId } }, tx);
       return { imported, replaced };
     });
@@ -177,9 +182,11 @@ const projectsRoutes: FastifyPluginAsync = async (app) => {
     ];
     if (!sets.length) return { updated: 0 };
     return app.db.transaction(async (tx) => {
+      const before = brigadeId !== undefined ? await layerBrigades(tx, groupWhere(projectId, req.body)) : [];
       const res = await tx.execute(sql`UPDATE project_layers SET ${sql.join(sets, sql`, `)}, updated_at = now() WHERE ${groupWhere(projectId, req.body)}`);
       if (!res.rowCount) throw notFound('Grupo de capas');
       if (kind) await classifyStations(tx, projectId);
+      if (brigadeId !== undefined) await syncBrigadeAreas(tx, [...before, brigadeId]);
       await audit(req, 'project_layers', projectId, 'update', { after: req.body }, tx);
       return { updated: res.rowCount };
     });
@@ -189,10 +196,12 @@ const projectsRoutes: FastifyPluginAsync = async (app) => {
     const projectId = req.params.id;
     return app.db.transaction(async (tx) => {
       const where = groupWhere(projectId, req.body);
+      const before = await layerBrigades(tx, where);
       await tx.execute(sql`UPDATE stations SET vegetation_layer_id = NULL WHERE vegetation_layer_id IN (SELECT id FROM project_layers WHERE ${where})`);
       const res = await tx.execute(sql`DELETE FROM project_layers WHERE ${where}`);
       if (!res.rowCount) throw notFound('Grupo de capas');
       await classifyStations(tx, projectId);
+      await syncBrigadeAreas(tx, before);
       await audit(req, 'project_layers', projectId, 'delete', { before: { ...req.body, count: res.rowCount } }, tx);
       return { deleted: res.rowCount };
     });
@@ -218,9 +227,10 @@ const projectsRoutes: FastifyPluginAsync = async (app) => {
   r.delete('/projects/:projectId/layers/:id', { onRequest: write, schema: { params: z.object({ projectId: z.string().uuid(), id: z.string().uuid() }) } }, async (req) => {
     await app.db.transaction(async (tx) => {
       await tx.update(schema.stations).set({ vegetationLayerId: null }).where(eq(schema.stations.vegetationLayerId, req.params.id));
-      const [l] = await tx.delete(projectLayers).where(and(eq(projectLayers.id, req.params.id), eq(projectLayers.projectId, req.params.projectId))).returning({ id: projectLayers.id, name: projectLayers.name });
+      const [l] = await tx.delete(projectLayers).where(and(eq(projectLayers.id, req.params.id), eq(projectLayers.projectId, req.params.projectId))).returning({ id: projectLayers.id, name: projectLayers.name, brigadeId: projectLayers.brigadeId });
       if (!l) throw notFound('Capa');
       await classifyStations(tx, req.params.projectId);
+      await syncBrigadeAreas(tx, [l.brigadeId]);
       await audit(req, 'project_layers', req.params.id, 'delete', { before: l }, tx);
     });
     return { ok: true };

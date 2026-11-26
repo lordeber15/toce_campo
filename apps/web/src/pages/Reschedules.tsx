@@ -1,42 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router';
 import {
-  INCIDENT_STATUS_LABELS, INCIDENT_TYPE_LABELS, INQUIRY_FILE_MAX_BYTES, INQUIRY_FILE_TYPES, RESCHEDULE_APPROVER_ROLES,
-  RESCHEDULE_STATUS_LABELS, RESCHEDULE_STATUSES,
-  type IncidentStatus, type IncidentType, type RescheduleDetail, type RescheduleFile, type RescheduleOptionIncident,
-  type RescheduleOptions, type RescheduleRow, type RescheduleStatus,
+  INCIDENT_STATUS_LABELS, RESCHEDULE_APPROVER_ROLES, RESCHEDULE_STATUS_LABELS, RESCHEDULE_STATUSES,
+  type IncidentStatus, type RescheduleDetail, type RescheduleOptionIncident, type RescheduleOptions, type RescheduleRow, type RescheduleStatus,
 } from '@toce/shared';
 import { api } from '../lib/api';
-import { MediaViewer } from '../components/MediaViewer';
+import { FileLink, FilePicker, fileProblem, uploadFiles } from '../components/Attachments';
+import { BrigadeSelect } from '../components/Filters';
+import { RescheduleForm, incidentTypeLabel, rescheduleDay } from '../components/RescheduleForm';
 import { useAuth } from '../lib/auth';
 import { useProject } from '../lib/project';
-import { Dialog, ErrorBox, NoProject } from '../components/Dialog';
+import { ErrorBox, NoProject } from '../components/Dialog';
 
 const STATUS_CHIP: Record<RescheduleStatus, string> = { propuesta: 'chip chip-warn', aprobada: 'chip chip-ok', rechazada: 'chip' };
-const day = (d: string) =>
-  new Date(`${d}T12:00:00-05:00`).toLocaleDateString('es-PE', { timeZone: 'America/Lima', weekday: 'short', day: '2-digit', month: 'short' });
+const day = rescheduleDay;
 const when = (iso: string) =>
   new Date(iso).toLocaleString('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
 const VISIT_STATUS: Record<string, string> = { planificada: 'Planificada', en_curso: 'En curso', no_realizada: 'No realizada', reprogramada: 'Reprogramada' };
-const incType = (t: string) => INCIDENT_TYPE_LABELS[t as IncidentType] ?? t;
-const ACCEPT = INQUIRY_FILE_TYPES.join(',');
-const mb = (b: number) => `${(b / (1024 * 1024)).toLocaleString('es-PE', { maximumFractionDigits: 1 })} MB`;
-
-function fileProblem(files: File[]) {
-  const bad = files.find((f) => !(INQUIRY_FILE_TYPES as readonly string[]).includes(f.type));
-  if (bad) return `“${bad.name}” no es un tipo admitido (fotos, PDF, audio, Excel o Word).`;
-  const big = files.find((f) => f.size > INQUIRY_FILE_MAX_BYTES);
-  if (big) return `“${big.name}” pesa ${mb(big.size)}; el máximo es ${mb(INQUIRY_FILE_MAX_BYTES)}.`;
-  return null;
-}
-
-async function uploadAll(rescheduleId: string, files: File[]) {
-  for (const f of files) {
-    await api(`/reschedules/${rescheduleId}/files?name=${encodeURIComponent(f.name)}`, { method: 'PUT', body: f, headers: { 'content-type': f.type } });
-  }
-}
-
+const incType = incidentTypeLabel;
+const uploadUrl = (rescheduleId: string) => (f: File) => `/reschedules/${rescheduleId}/files?name=${encodeURIComponent(f.name)}`;
 type Draft = { incident?: RescheduleOptionIncident };
 
 /** Reprogramaciones (5.5): propuestas, aprobación por coordinación, evidencias e historial de cada visita. */
@@ -112,17 +95,14 @@ export function ReschedulesPage() {
         </div>
       )}
 
-      <div className="split" style={{ gridTemplateColumns: 'minmax(300px, 420px) 1fr' }}>
+      <div className="split" style={{ '--split-cols': 'minmax(300px, 420px) 1fr' } as React.CSSProperties}>
         <div className="card">
           <div className="toolbar" style={{ flexWrap: 'wrap' }}>
             <select className="input" value={status} onChange={(e) => { setStatus(e.target.value as RescheduleStatus | ''); setSelected(null); }} aria-label="Estado">
               <option value="">Todos los estados</option>
               {RESCHEDULE_STATUSES.map((s) => <option key={s} value={s}>{RESCHEDULE_STATUS_LABELS[s]}</option>)}
             </select>
-            <select className="input" value={brigadeId} onChange={(e) => { setBrigadeId(e.target.value); setSelected(null); }} aria-label="Brigada">
-              <option value="">Todas las brigadas</option>
-              {options.data?.brigades.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
+            <BrigadeSelect value={brigadeId} onChange={(v) => { setBrigadeId(v); setSelected(null); }} brigades={options.data?.brigades ?? []} />
             <input className="input" type="search" value={text} onChange={(e) => { setText(e.target.value); setSelected(null); }} placeholder="Buscar estación, brigada, motivo o persona" aria-label="Buscar" />
           </div>
           <div className="list scroll-y" style={{ maxHeight: 'calc(100vh - 300px)', opacity: list.isPlaceholderData ? 0.6 : 1 }}>
@@ -163,152 +143,39 @@ export function ReschedulesPage() {
   );
 }
 
+/** Alta de una reprogramación desde esta página (con brigada, alerta vinculada, sustento y evidencias). */
 function NewRescheduleDialog({ projectId, options, incident, approver, onClose, onCreated }: {
   projectId: string; options: RescheduleOptions; incident?: RescheduleOptionIncident; approver: boolean;
   onClose: () => void; onCreated: (id: string) => void;
 }) {
   const qc = useQueryClient();
   // Con una alerta: sus visitas (misma estación y, si la tiene, misma brigada).
-  const forIncident = (v: RescheduleOptions['visits'][number]) =>
-    !incident || (v.stationId === incident.stationId && (!incident.brigadeId || v.brigadeId === incident.brigadeId));
-  const [brigadeId, setBrigadeId] = useState(incident?.brigadeId ?? '');
-  const visits = useMemo(
-    () => options.visits.filter((v) => forIncident(v) && (!brigadeId || v.brigadeId === brigadeId)),
-    [options.visits, brigadeId], // eslint-disable-line react-hooks/exhaustive-deps
-  );
-  const [scheduleId, setScheduleId] = useState(() => visits.find((v) => !v.pending)?.id ?? '');
-  const visit = options.visits.find((v) => v.id === scheduleId);
-  const [incidentId, setIncidentId] = useState(incident?.id ?? '');
-  const incidents = options.incidents.filter((i) => !visit || (i.stationId === visit.stationId && (!i.brigadeId || i.brigadeId === visit.brigadeId)));
-  const [newDate, setNewDate] = useState('');
-  const [reason, setReason] = useState(incident?.type === 'lluvia_intensa' ? 'Lluvia intensa' : incident ? incType(incident.type) : '');
-  const [justification, setJustification] = useState('');
-  const [reopen, setReopen] = useState(true);
-  const [files, setFiles] = useState<File[]>([]);
-  const problem = fileProblem(files);
-  const save = useMutation({
-    mutationFn: async (approve: boolean) => {
-      const r = await api<{ id: string }>(`/projects/${projectId}/reschedules`, {
-        method: 'POST',
-        body: JSON.stringify({ scheduleId, newDate, reason, justification: justification || null, incidentId: incidentId || null, reopenUnits: reopen, approve }),
-      });
-      await uploadAll(r.id, files);
-      return r;
-    },
-    onSuccess: (r) => {
-      void qc.invalidateQueries({ queryKey: ['reschedules'] });
-      void qc.invalidateQueries({ queryKey: ['reschedule-options'] });
-      onCreated(r.id);
-    },
-  });
-  const ok = scheduleId && !visit?.pending && newDate && newDate !== visit?.plannedDate && reason.trim().length >= 3 && !problem;
-
+  const visits = options.visits.filter((v) => !incident || (v.stationId === incident.stationId && (!incident.brigadeId || v.brigadeId === incident.brigadeId)));
   return (
-    <Dialog
-      title={approver ? 'Nueva reprogramación' : 'Proponer reprogramación'}
-      wide
+    <RescheduleForm
+      variant="dialog"
+      visits={visits}
+      brigades={options.brigades}
+      incidents={options.incidents}
+      incident={incident}
+      initialReason={incident?.type === 'lluvia_intensa' ? 'Lluvia intensa' : incident ? incType(incident.type) : ''}
+      approver={approver}
+      details
       onClose={onClose}
-      onSubmit={() => ok && !save.isPending && save.mutate(approver)}
-      footer={<>
-        <button type="button" className="btn" onClick={onClose}>Cancelar</button>
-        {approver && <button type="button" className="btn" disabled={!ok || save.isPending} onClick={() => save.mutate(false)}>Guardar como propuesta</button>}
-        <button type="submit" className="btn btn-primary" disabled={!ok || save.isPending}>
-          {save.isPending ? 'Guardando…' : approver ? 'Aprobar y actualizar cronograma' : 'Enviar propuesta'}
-        </button>
-      </>}
-    >
-      {incident && (
-        <p className="hint" style={{ marginTop: 0 }}>
-          Alerta: <strong>{incType(incident.type)}</strong>{incident.stationCode ? ` en ${incident.stationCode}` : ''} · {incident.reportedByName} · {incident.description}
-        </p>
-      )}
-      <div className="grid-2">
-        <label className="field">
-          <span className="label">Brigada</span>
-          <select className="input" value={brigadeId} onChange={(e) => { setBrigadeId(e.target.value); setScheduleId(''); }}>
-            <option value="">Todas</option>
-            {options.brigades.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
-        </label>
-        <label className="field">
-          <span className="label">Visita</span>
-          <select className="input" value={scheduleId} onChange={(e) => setScheduleId(e.target.value)} required>
-            <option value="">Elige…</option>
-            {visits.map((v) => (
-              <option key={v.id} value={v.id} disabled={v.pending}>
-                {day(v.plannedDate)} · {v.stationCode} · {v.brigadeName}{v.status !== 'planificada' ? ` · ${VISIT_STATUS[v.status] ?? v.status}` : ''}{v.pending ? ' · ya tiene propuesta' : ''}
-              </option>
-            ))}
-          </select>
-          {visit && visit.originalDate !== visit.plannedDate && <span className="hint">Fecha original del cronograma: {day(visit.originalDate)}</span>}
-          {!visits.length && <span className="hint">No hay visitas por ejecutar{incident ? ' de esta alerta' : ''}.</span>}
-        </label>
-        <label className="field">
-          <span className="label">Nueva fecha</span>
-          <input className="input" type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} required />
-        </label>
-        <label className="field">
-          <span className="label">Alerta vinculada (opcional)</span>
-          <select className="input" value={incidentId} onChange={(e) => setIncidentId(e.target.value)}>
-            <option value="">—</option>
-            {incidents.map((i) => <option key={i.id} value={i.id}>{incType(i.type)} · {i.stationCode ?? 'sin estación'} · {when(i.occurredAt)}</option>)}
-          </select>
-        </label>
-      </div>
-      <label className="field" style={{ marginTop: 12 }}>
-        <span className="label">Motivo</span>
-        <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} maxLength={2000} placeholder="Ej. Lluvia intensa, acceso bloqueado" required />
-      </label>
-      <label className="field" style={{ marginTop: 12 }}>
-        <span className="label">Sustento (opcional)</span>
-        <textarea className="input" rows={3} value={justification} onChange={(e) => setJustification(e.target.value)} maxLength={4000} placeholder="Por qué se elige la nueva fecha, coordinaciones realizadas, etc." />
-      </label>
-      <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14, marginTop: 12 }}>
-        <input type="checkbox" checked={reopen} onChange={(e) => setReopen(e.target.checked)} /> Al aprobar, volver a dejar pendientes las unidades no realizadas de la estación
-      </label>
-      <FilePicker files={files} onChange={setFiles} />
-      <ErrorBox error={problem ? new Error(problem) : save.error} />
-    </Dialog>
-  );
-}
-
-function FilePicker({ files, onChange, label = 'Adjuntar evidencias' }: { files: File[]; onChange: (f: File[]) => void; label?: string }) {
-  const ref = useRef<HTMLInputElement>(null);
-  return (
-    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
-      <input ref={ref} type="file" multiple accept={ACCEPT} hidden onChange={(e) => { onChange([...files, ...Array.from(e.target.files ?? [])]); e.target.value = ''; }} />
-      <button type="button" className="btn btn-sm" onClick={() => ref.current?.click()}>{label}</button>
-      {files.map((f, i) => (
-        <span key={i} className="chip" style={{ gap: 4 }}>
-          {f.name} ({mb(f.size)})
-          <button type="button" className="icon-btn" style={{ width: 18, height: 18, fontSize: 14 }} onClick={() => onChange(files.filter((_, j) => j !== i))} aria-label={`Quitar ${f.name}`}>×</button>
-        </span>
-      ))}
-      {!files.length && <span className="hint">Fotos, PDF, audio, Excel o Word; hasta 25 MB cada uno.</span>}
-    </div>
-  );
-}
-
-function FileLink({ file }: { file: RescheduleFile }) {
-  const [open, setOpen] = useState(false);
-  const icon = file.kind === 'foto' ? '🖼' : file.kind === 'audio' ? '🎧' : '📄';
-  const name = file.name ?? 'archivo';
-  return (
-    <>
-      <button type="button" className="chip" onClick={() => setOpen(true)} title="Ver" style={{ cursor: 'pointer', border: 0 }}>
-        {icon} {name}{file.sizeBytes ? ` (${mb(file.sizeBytes)})` : ''}
-      </button>
-      {open && (
-        <MediaViewer
-          title={name}
-          kind={file.kind}
-          mimeType={file.mimeType}
-          queryKey={['/reschedule-files/', file.id]}
-          load={() => api<{ url: string }>(`/reschedule-files/${file.id}/url`).then((r) => r.url)}
-          onClose={() => setOpen(false)}
-        />
-      )}
-    </>
+      submit={async (v, approve) => {
+        const r = await api<{ id: string }>(`/projects/${projectId}/reschedules`, {
+          method: 'POST',
+          body: JSON.stringify({ scheduleId: v.scheduleId, newDate: v.newDate, reason: v.reason, justification: v.justification, incidentId: v.incidentId, reopenUnits: v.reopenUnits, approve }),
+        });
+        await uploadFiles(uploadUrl(r.id), v.files);
+        return r;
+      }}
+      onDone={(r) => {
+        void qc.invalidateQueries({ queryKey: ['reschedules'] });
+        void qc.invalidateQueries({ queryKey: ['reschedule-options'] });
+        onCreated((r as { id: string }).id);
+      }}
+    />
   );
 }
 
@@ -322,7 +189,7 @@ function RescheduleView({ id, approver }: { id: string; approver: boolean }) {
   };
   const [files, setFiles] = useState<File[]>([]);
   const problem = fileProblem(files);
-  const upload = useMutation({ mutationFn: () => uploadAll(id, files), onSuccess: () => { setFiles([]); refresh(); } });
+  const upload = useMutation({ mutationFn: () => uploadFiles(uploadUrl(id), files), onSuccess: () => { setFiles([]); refresh(); } });
   if (q.isLoading) return <div className="card empty">Cargando…</div>;
   if (q.error || !q.data) return <div className="card" style={{ padding: 16 }}><ErrorBox error={q.error} /></div>;
   const d = q.data;
@@ -362,7 +229,7 @@ function RescheduleView({ id, approver }: { id: string; approver: boolean }) {
 
       <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
         <div className="section-title" style={{ margin: 0 }}>Evidencias ({d.fileList.length})</div>
-        {d.fileList.length > 0 && <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>{d.fileList.map((f) => <FileLink key={f.id} file={f} />)}</div>}
+        {d.fileList.length > 0 && <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>{d.fileList.map((f) => <FileLink key={f.id} file={f} endpoint="/reschedule-files/" />)}</div>}
         <FilePicker files={files} onChange={setFiles} label="Agregar evidencias" />
         {files.length > 0 && (
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>

@@ -99,6 +99,27 @@
       "when": 1795651515037,
       "tag": "0013_gps_tracks",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1795662494255,
+      "tag": "0014_template_import",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1795664345816,
+      "tag": "0015_huella_priority",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1795664749732,
+      "tag": "0016_brigade_area_from_layers",
+      "breakpoints": true
     }
   ]
 }

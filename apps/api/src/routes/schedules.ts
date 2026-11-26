@@ -42,21 +42,29 @@ const schedulesRoutes: FastifyPluginAsync = async (app) => {
       onRequest: read,
       schema: {
         params: projectParam,
-        querystring: z.object({ from: z.string().optional(), to: z.string().optional(), brigadeId: z.string().uuid().optional() }),
+        querystring: z.object({
+          from: z.string().optional(),
+          to: z.string().optional(),
+          brigadeId: z.string().uuid().optional(),
+          /** true: incluye actividades sin estación (movilización, descanso...). Por defecto solo visitas a estaciones. */
+          includeActivities: z.enum(['true', 'false', '1', '0']).optional(),
+        }),
       },
     },
     async (req) => {
       const { from, to, brigadeId } = req.query;
+      const all = req.query.includeActivities === 'true' || req.query.includeActivities === '1';
       const rows = await app.db.execute(sql`
         SELECT sc.id, to_char(sc.planned_date, 'YYYY-MM-DD') AS "plannedDate", to_char(sc.original_date, 'YYYY-MM-DD') AS "originalDate",
-          sc.sort_order AS "sortOrder", sc.status, sc.notes,
-          sc.brigade_id AS "brigadeId", b.name AS "brigadeName", sp.code AS "specialtyCode",
+          sc.sort_order AS "sortOrder", sc.status, sc.notes, sc.activity_type AS "activityType", sc.detail,
+          sc.brigade_id AS "brigadeId", b.name AS "brigadeName", b.code AS "brigadeCode", sp.code AS "specialtyCode",
           sc.station_id AS "stationId", s.code AS "stationCode", ST_Y(s.geom) AS lat, ST_X(s.geom) AS lng
         FROM schedules sc
         JOIN brigades b ON b.id = sc.brigade_id
         LEFT JOIN specialties sp ON sp.id = b.specialty_id
-        JOIN stations s ON s.id = sc.station_id
+        LEFT JOIN stations s ON s.id = sc.station_id
         WHERE sc.project_id = ${req.params.projectId}
+          ${all ? sql`` : sql`AND sc.station_id IS NOT NULL`}
           ${from ? sql`AND sc.planned_date >= ${from}` : sql``}
           ${to ? sql`AND sc.planned_date <= ${to}` : sql``}
           ${brigadeId ? sql`AND sc.brigade_id = ${brigadeId}` : sql``}
@@ -111,8 +119,9 @@ const schedulesRoutes: FastifyPluginAsync = async (app) => {
       if (cur.status !== 'planificada' && (req.body.plannedDate || req.body.stationId || req.body.brigadeId)) {
         throw conflict('Esta programación ya se inició; los cambios de fecha o estación se hacen como reprogramación.');
       }
-      if (req.body.brigadeId || req.body.stationId) {
-        await validatePair(tx, cur.projectId, req.body.brigadeId ?? cur.brigadeId, req.body.stationId ?? cur.stationId);
+      const stationId = req.body.stationId ?? cur.stationId;
+      if ((req.body.brigadeId || req.body.stationId) && stationId) {
+        await validatePair(tx, cur.projectId, req.body.brigadeId ?? cur.brigadeId, stationId);
       }
       await tx.update(schedules).set(req.body).where(eq(schedules.id, cur.id));
       await audit(req, 'schedule', cur.id, 'update', { before: cur, after: req.body }, tx);

@@ -1,10 +1,9 @@
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from '@fastify/type-provider-zod';
 import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
-import { ADMIN_ROLES, WEB_ROLES, brigadeAreaSchema, brigadeSchema } from '@toce/shared';
+import { ADMIN_ROLES, WEB_ROLES, brigadeSchema } from '@toce/shared';
 import { schema } from '../db/index.js';
 import { audit } from '../lib/audit.js';
-import { reclassifyBrigadePhotos } from '../lib/geo.js';
 import { badRequest, conflict, idParam, isUniqueViolation, notFound, projectParam } from '../lib/http.js';
 
 const { brigades, brigadeMembers, users } = schema;
@@ -17,14 +16,16 @@ const brigadesRoutes: FastifyPluginAsync = async (app) => {
 
   r.get('/projects/:projectId/brigades', { onRequest: read, schema: { params: projectParam } }, async (req) => {
     const rows = await app.db.execute(sql`
-      SELECT b.id, b.name, b.is_active AS "isActive", b.specialty_id AS "specialtyId", sp.name AS "specialtyName",
+      SELECT b.id, b.code, b.name, b.region, b.notes, b.is_active AS "isActive", b.specialty_id AS "specialtyId", sp.name AS "specialtyName",
         b.leader_id AS "leaderId", lu.full_name AS "leaderName",
         b.logistician_id AS "logisticianId", lg.full_name AS "logisticianName",
         b.supervisor_id AS "supervisorId", su.full_name AS "supervisorName",
-        coalesce((SELECT json_agg(json_build_object('id', u.id, 'fullName', u.full_name, 'dni', u.dni, 'specialtyId', u.specialty_id) ORDER BY u.full_name)
+        coalesce((SELECT json_agg(json_build_object('id', u.id, 'fullName', u.full_name, 'dni', u.dni, 'specialtyId', u.specialty_id,
+          'validFrom', m.valid_from, 'validTo', m.valid_to) ORDER BY u.full_name)
           FROM brigade_members m JOIN users u ON u.id = m.user_id WHERE m.brigade_id = b.id AND m.left_at IS NULL), '[]') AS members,
         (SELECT count(*)::int FROM schedules sc WHERE sc.brigade_id = b.id) AS schedules,
         b.area_name AS "areaName", b.area_source_file AS "areaSourceFile",
+        (SELECT count(*)::int FROM project_layers l WHERE l.brigade_id = b.id) AS "layers",
         CASE WHEN b.area_geom IS NULL THEN NULL ELSE round((ST_Area(b.area_geom::geography) / 10000)::numeric, 2)::float END AS "areaHa",
         (SELECT count(*)::int FROM attachments a JOIN executions e ON a.owner_type = 'execution' AND e.id = a.owner_id
           WHERE e.brigade_id = b.id AND a.outside_area) AS "photosOutside"
@@ -82,7 +83,7 @@ const brigadesRoutes: FastifyPluginAsync = async (app) => {
       });
       return reply.code(201).send(b);
     } catch (e) {
-      if (isUniqueViolation(e)) throw conflict('Ya existe una brigada con ese nombre en el proyecto');
+      if (isUniqueViolation(e)) throw conflict('Ya existe una brigada con ese nombre o código en el proyecto');
       throw e;
     }
   });
@@ -98,11 +99,14 @@ const brigadesRoutes: FastifyPluginAsync = async (app) => {
           const current = memberIds ?? (await tx.select({ id: brigadeMembers.userId }).from(brigadeMembers).where(and(eq(brigadeMembers.brigadeId, cur.id), isNull(brigadeMembers.leftAt)))).map((m) => m.id);
           await syncMembers(tx, cur.projectId, cur.id, b!.specialtyId, b!.leaderId, current);
         }
-        await audit(req, 'brigade', cur.id, 'update', { before: cur, after: req.body }, tx);
-        return b;
+        const { areaGeom: _g, ...before } = cur;
+        await audit(req, 'brigade', cur.id, 'update', { before, after: req.body }, tx);
+        // El polígono (derivado de los KMZ) puede ser grande: no se devuelve aquí.
+        const { areaGeom: _a, ...out } = b!;
+        return out;
       });
     } catch (e) {
-      if (isUniqueViolation(e)) throw conflict('Ya existe una brigada con ese nombre en el proyecto');
+      if (isUniqueViolation(e)) throw conflict('Ya existe una brigada con ese nombre o código en el proyecto');
       throw e;
     }
   });
@@ -117,7 +121,9 @@ const brigadesRoutes: FastifyPluginAsync = async (app) => {
     return rows.rows;
   });
 
-  // ---------- Polígono de trabajo de la brigada (KMZ -> GeoJSON en el navegador -> aquí) ----------
+  // ---------- Polígono de trabajo de la brigada ----------
+  // Se deriva de las capas KMZ asignadas a la brigada en "Mapa y capas" (lib/brigadeAreas.ts);
+  // aquí solo se lee. Ya no hay carga ni borrado directo del polígono.
 
   /** Polígonos de las brigadas del proyecto (para el mapa). */
   r.get('/projects/:projectId/brigade-areas', { onRequest: read, schema: { params: projectParam } }, async (req) => {
@@ -131,44 +137,6 @@ const brigadesRoutes: FastifyPluginAsync = async (app) => {
       type: 'FeatureCollection',
       features: rows.rows.map(({ geometry, ...props }) => ({ type: 'Feature', id: props.id, geometry, properties: props })),
     };
-  });
-
-  r.put(
-    '/brigades/:id/area',
-    { onRequest: write, bodyLimit: 100 * 1024 * 1024, schema: { params: idParam, body: brigadeAreaSchema } },
-    async (req) => {
-      const geoms = sql.join(
-        req.body.geometries.map((g) => sql`ST_MakeValid(ST_Force2D(ST_SetSRID(ST_GeomFromGeoJSON(${JSON.stringify(g)}), 4326)))`),
-        sql`, `,
-      );
-      return app.db.transaction(async (tx) => {
-        const [cur] = await tx.select({ id: brigades.id, areaName: brigades.areaName }).from(brigades).where(eq(brigades.id, req.params.id));
-        if (!cur) throw notFound('Brigada');
-        const res = await tx.execute(sql`
-          UPDATE brigades SET
-            area_geom = (SELECT ST_Multi(ST_CollectionExtract(ST_UnaryUnion(ST_Collect(g)), 3)) FROM unnest(ARRAY[${geoms}]) g),
-            area_name = ${req.body.name}, area_source_file = ${req.body.sourceFile ?? null}, updated_at = now()
-          WHERE id = ${cur.id}
-          RETURNING ST_IsEmpty(area_geom) AS empty, round((ST_Area(area_geom::geography) / 10000)::numeric, 2)::float AS "areaHa"`);
-        const out = res.rows[0] as { empty: boolean; areaHa: number };
-        if (out.empty) throw badRequest('El KMZ no contiene polígonos');
-        await reclassifyBrigadePhotos(tx, cur.id);
-        await audit(req, 'brigade', cur.id, 'area', { before: { areaName: cur.areaName }, after: { name: req.body.name, sourceFile: req.body.sourceFile, areaHa: out.areaHa } }, tx);
-        return { ok: true, areaHa: out.areaHa };
-      });
-    },
-  );
-
-  r.delete('/brigades/:id/area', { onRequest: write, schema: { params: idParam } }, async (req) => {
-    return app.db.transaction(async (tx) => {
-      const res = await tx.execute(sql`
-        UPDATE brigades SET area_geom = NULL, area_name = NULL, area_source_file = NULL, updated_at = now()
-        WHERE id = ${req.params.id} RETURNING id`);
-      if (!res.rows.length) throw notFound('Brigada');
-      await reclassifyBrigadePhotos(tx, req.params.id);
-      await audit(req, 'brigade', req.params.id, 'area_delete', undefined, tx);
-      return { ok: true };
-    });
   });
 
   r.delete('/brigades/:id', { onRequest: write, schema: { params: idParam } }, async (req) => {

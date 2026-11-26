@@ -1,23 +1,33 @@
 import { useState } from 'react';
+import { Link } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ADMIN_ROLES, type Role } from '@toce/shared';
+import { ADMIN_ROLES, BRIGADE_REGIONS, type BrigadeRegion, type Role } from '@toce/shared';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useProject } from '../lib/project';
 import { Dialog, ErrorBox, NoProject } from '../components/Dialog';
-import { MapView } from '../components/MapView';
-import { parseKmlFile } from '../lib/kmz';
-import type { FeatureCollection, Geometry } from 'geojson';
 
-type Member = { id: string; fullName: string; dni: string; specialtyId: string | null };
+type Member = { id: string; fullName: string; dni: string; specialtyId: string | null; validFrom: string | null; validTo: string | null };
 type Brigade = {
-  id: string; name: string; isActive: boolean; specialtyId: string | null; specialtyName: string | null;
+  id: string; code: string | null; name: string; region: BrigadeRegion | null; notes: string | null;
+  isActive: boolean; specialtyId: string | null; specialtyName: string | null;
   leaderId: string | null; leaderName: string | null; logisticianId: string | null; logisticianName: string | null;
   supervisorId: string | null; supervisorName: string | null; members: Member[]; schedules: number;
-  areaName: string | null; areaSourceFile: string | null; areaHa: number | null; photosOutside: number;
+  /** Zona de trabajo: derivada de los KMZ asignados a la brigada en "Mapa y capas". */
+  areaName: string | null; areaSourceFile: string | null; areaHa: number | null; layers: number; photosOutside: number;
 };
 type Candidate = { id: string; fullName: string; dni: string; roles: Role[]; specialtyId: string | null; brigadeId: string | null };
 type Specialty = { id: string; name: string };
+
+const REGION_LABEL: Record<BrigadeRegion, string> = { COSTA: 'Costa', SIERRA: 'Sierra', SELVA: 'Selva' };
+/** AAAA-MM-DD -> dd/mm/aaaa */
+const dmy = (d: string | null) => (d ? d.slice(0, 10).split('-').reverse().join('/') : null);
+const validity = (m: Member) => {
+  const from = dmy(m.validFrom);
+  const to = dmy(m.validTo);
+  if (!from && !to) return null;
+  return from && to ? `${from} – ${to}` : from ? `desde ${from}` : `hasta ${to}`;
+};
 
 export function BrigadesPage() {
   const { project } = useProject();
@@ -25,11 +35,6 @@ export function BrigadesPage() {
   const isAdmin = can(...ADMIN_ROLES);
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Brigade | 'new' | null>(null);
-  const [areaFor, setAreaFor] = useState<Brigade | null>(null);
-  const removeArea = useMutation({
-    mutationFn: (id: string) => api(`/brigades/${id}/area`, { method: 'DELETE' }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['brigades'] }); qc.invalidateQueries({ queryKey: ['brigade-areas'] }); },
-  });
   const brigades = useQuery({ queryKey: ['brigades', project?.id], enabled: !!project, queryFn: () => api<Brigade[]>(`/projects/${project!.id}/brigades`) });
   const deactivate = useMutation({
     mutationFn: (id: string) => api(`/brigades/${id}`, { method: 'DELETE' }),
@@ -40,14 +45,24 @@ export function BrigadesPage() {
   return (
     <>
       <div className="page-head">
-        <div><h1>Brigadas</h1><p>Equipos de {project.code}: especialidad, jefe de brigada, logístico, supervisor y especialistas.</p></div>
-        {isAdmin && <button className="btn btn-primary" onClick={() => setEditing('new')}>Nueva brigada</button>}
+        <div>
+          <h1>Brigadas</h1>
+          <p>
+            Equipos de {project.code}: especialidad, jefe de brigada, logístico, supervisor y especialistas. Normalmente llegan con
+            la <Link to="/carga-masiva">carga masiva</Link>; aquí se ajustan. La zona de trabajo de cada brigada es su KMZ en <Link to="/capas">Mapa y capas</Link>.
+          </p>
+        </div>
+        {isAdmin && <button className="btn" onClick={() => setEditing('new')}>Nueva brigada</button>}
       </div>
       <div className="stats" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))' }}>
         {(brigades.data ?? []).map((b) => (
           <div key={b.id} className="card" style={{ padding: 16, display: 'flex', flexDirection: 'column', gap: 10, opacity: b.isActive ? 1 : 0.55 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <h3 style={{ flex: 1 }}>{b.name}</h3>
+              <h3 style={{ flex: 1 }}>
+                {b.name}
+                {b.code && b.code !== b.name.toUpperCase() && <span className="hint" style={{ marginLeft: 6, fontWeight: 500 }}>{b.code}</span>}
+              </h3>
+              {b.region && <span className="chip">{REGION_LABEL[b.region]}</span>}
               <span className="chip">{b.specialtyName ?? 'Mixta'}</span>
               {!b.isActive && <span className="chip chip-off">Inactiva</span>}
             </div>
@@ -56,28 +71,34 @@ export function BrigadesPage() {
               <dt>Logístico</dt><dd>{b.logisticianName ?? '—'}</dd>
               <dt>Supervisor</dt><dd>{b.supervisorName ?? '—'}</dd>
               <dt>Programaciones</dt><dd>{b.schedules}</dd>
+              {b.code && <><dt>Código</dt><dd>{b.code}</dd></>}
             </dl>
+            {b.notes && <p className="hint" style={{ margin: 0 }}>{b.notes}</p>}
             <div>
               <div className="section-title">Especialistas ({b.members.length})</div>
-              <div className="pill-list">{b.members.map((m) => <span key={m.id} className="chip">{m.fullName}</span>)}{!b.members.length && <span className="hint">Sin miembros</span>}</div>
+              <div className="pill-list">
+                {b.members.map((m) => {
+                  const v = validity(m);
+                  return <span key={m.id} className="chip" title={v ? `Vigencia en la brigada: ${v}` : undefined}>{m.fullName}{v && <span className="hint"> · {v}</span>}</span>;
+                })}
+                {!b.members.length && <span className="hint">Sin miembros</span>}
+              </div>
             </div>
             <div>
-              <div className="section-title">Polígono de trabajo</div>
+              <div className="section-title">Zona de trabajo</div>
               {b.areaHa != null ? (
                 <p style={{ margin: 0, fontSize: 14 }}>
                   <strong>{b.areaName}</strong> · {b.areaHa.toLocaleString('es-PE')} ha
-                  {b.areaSourceFile && <span className="hint"> · {b.areaSourceFile}</span>}
                   {b.photosOutside > 0 && <span className="chip chip-warn" style={{ marginLeft: 6 }}>{b.photosOutside} foto{b.photosOutside === 1 ? '' : 's'} fuera</span>}
                 </p>
-              ) : <span className="hint">Sin polígono: las fotos no se verifican.</span>}
-              {isAdmin && b.isActive && (
-                <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-                  <button className="btn btn-sm" onClick={() => setAreaFor(b)}>{b.areaHa != null ? 'Reemplazar KMZ' : 'Cargar KMZ'}</button>
-                  {b.areaHa != null && (
-                    <button className="btn btn-sm btn-danger" disabled={removeArea.isPending} onClick={() => confirm(`¿Quitar el polígono de ${b.name}?`) && removeArea.mutate(b.id)}>Quitar</button>
-                  )}
-                </div>
+              ) : (
+                <span className="hint">
+                  {b.layers > 0 ? 'Su KMZ no tiene polígonos: las fotos no se verifican.' : 'Sin KMZ asignado: las fotos no se verifican y el mapa del teléfono cubre solo sus estaciones.'}
+                </span>
               )}
+              <div className="hint" style={{ marginTop: 4 }}>
+                {isAdmin ? <>Se asigna en <Link to="/capas">Mapa y capas</Link>: importa el KMZ y elige esta brigada.</> : <>Se gestiona en <Link to="/capas">Mapa y capas</Link>.</>}
+              </div>
             </div>
             {isAdmin && b.isActive && (
               <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
@@ -89,7 +110,6 @@ export function BrigadesPage() {
         ))}
       </div>
       {brigades.data && !brigades.data.length && <div className="card empty">Aún no hay brigadas en este proyecto.</div>}
-      {areaFor && <AreaDialog brigade={areaFor} onClose={() => setAreaFor(null)} onSaved={() => { setAreaFor(null); qc.invalidateQueries({ queryKey: ['brigades'] }); qc.invalidateQueries({ queryKey: ['brigade-areas'] }); }} />}
       {editing && <BrigadeDialog projectId={project.id} brigade={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); qc.invalidateQueries({ queryKey: ['brigades'] }); qc.invalidateQueries({ queryKey: ['projects'] }); }} />}
     </>
   );
@@ -99,7 +119,8 @@ function BrigadeDialog({ projectId, brigade, onClose, onSaved }: { projectId: st
   const specialties = useQuery({ queryKey: ['specialties'], queryFn: () => api<Specialty[]>('/specialties') });
   const candidates = useQuery({ queryKey: ['brigade-candidates', projectId], queryFn: () => api<Candidate[]>(`/projects/${projectId}/brigade-candidates`) });
   const [f, setF] = useState({
-    name: brigade?.name ?? '', specialtyId: brigade?.specialtyId ?? '', leaderId: brigade?.leaderId ?? '',
+    name: brigade?.name ?? '', code: brigade?.code ?? '', region: brigade?.region ?? '', notes: brigade?.notes ?? '',
+    specialtyId: brigade?.specialtyId ?? '', leaderId: brigade?.leaderId ?? '',
     logisticianId: brigade?.logisticianId ?? '', supervisorId: brigade?.supervisorId ?? '',
   });
   const [members, setMembers] = useState<Set<string>>(new Set(brigade?.members.map((m) => m.id)));
@@ -113,7 +134,8 @@ function BrigadeDialog({ projectId, brigade, onClose, onSaved }: { projectId: st
   const save = useMutation({
     mutationFn: () => {
       const body = {
-        name: f.name.trim(), specialtyId: f.specialtyId || null, leaderId: f.leaderId || null,
+        name: f.name.trim(), code: f.code.trim() || null, region: (f.region || null) as BrigadeRegion | null, notes: f.notes.trim() || null,
+        specialtyId: f.specialtyId || null, leaderId: f.leaderId || null,
         logisticianId: f.logisticianId || null, supervisorId: f.supervisorId || null, memberIds: [...members],
       };
       return brigade
@@ -138,14 +160,25 @@ function BrigadeDialog({ projectId, brigade, onClose, onSaved }: { projectId: st
       footer={<><button type="button" className="btn" onClick={onClose}>Cancelar</button><button className="btn btn-primary" disabled={save.isPending || !f.name}>{save.isPending ? 'Guardando…' : 'Guardar'}</button></>}
     >
       <ErrorBox error={save.error} />
-      <div className="grid-2">
+      {!brigade && <p className="hint" style={{ marginTop: 0 }}>Las brigadas suelen crearse con la carga masiva; usa este formulario para casos puntuales.</p>}
+      <div className="grid-3">
         <div className="field"><label htmlFor="b-name">Nombre</label><input id="b-name" className="input" value={f.name} onChange={set('name')} placeholder="Sierra 2" required /></div>
+        <div className="field"><label htmlFor="b-code">Código</label><input id="b-code" className="input" value={f.code} onChange={(e) => setF({ ...f, code: e.target.value.toUpperCase() })} placeholder="SIERRA 2" maxLength={30} /><span className="hint">Único en el proyecto.</span></div>
+        <div className="field"><label htmlFor="b-region">Región</label>
+          <select id="b-region" className="input" value={f.region} onChange={set('region')}>
+            <option value="">—</option>
+            {BRIGADE_REGIONS.map((r) => <option key={r} value={r}>{REGION_LABEL[r]}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className="grid-2">
         <div className="field"><label htmlFor="b-spec">Especialidad</label>
           <select id="b-spec" className="input" value={f.specialtyId} onChange={(e) => { setF({ ...f, specialtyId: e.target.value, leaderId: '' }); setMembers(new Set()); }}>
             <option value="">Mixta (varias especialidades)</option>
             {(specialties.data ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
         </div>
+        <div className="field"><label htmlFor="b-notes">Notas</label><input id="b-notes" className="input" value={f.notes} onChange={set('notes')} maxLength={2000} /></div>
       </div>
       <div className="field">
         <label>Especialistas</label>
@@ -160,6 +193,11 @@ function BrigadeDialog({ projectId, brigade, onClose, onSaved }: { projectId: st
           })}
           {!specialists.length && <span className="hint">No hay especialistas de esa especialidad. Créalos en Usuarios.</span>}
         </div>
+        {brigade && brigade.members.some(validity) && (
+          <span className="hint">
+            Vigencia (de la carga masiva, solo lectura): {brigade.members.filter(validity).map((m) => `${m.fullName} ${validity(m)}`).join(' · ')}
+          </span>
+        )}
       </div>
       <div className="grid-3">
         <div className="field"><label htmlFor="b-lead">Jefe de brigada</label>
@@ -179,79 +217,6 @@ function BrigadeDialog({ projectId, brigade, onClose, onSaved }: { projectId: st
           </select>
         </div>
       </div>
-    </Dialog>
-  );
-}
-
-type AreaPreview = { fileName: string; geometries: Geometry[]; preview: FeatureCollection; names: string[] };
-
-/** Carga el polígono de trabajo de la brigada desde un KMZ/KML (se unen todos sus polígonos). */
-function AreaDialog({ brigade, onClose, onSaved }: { brigade: Brigade; onClose: () => void; onSaved: () => void }) {
-  const [data, setData] = useState<AreaPreview | null>(null);
-  const [name, setName] = useState(brigade.areaName ?? '');
-  const [readError, setReadError] = useState<string | null>(null);
-  const [reading, setReading] = useState(false);
-
-  const onFile = async (file: File | undefined) => {
-    if (!file) return;
-    setReading(true);
-    setReadError(null);
-    setData(null);
-    try {
-      const all = await parseKmlFile(file);
-      const polys = all.filter((f) => f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon');
-      if (!polys.length) throw new Error('El archivo no tiene polígonos (solo puntos o líneas).');
-      setData({
-        fileName: file.name,
-        geometries: polys.map((f) => f.geometry),
-        names: polys.map((f) => f.name),
-        preview: {
-          type: 'FeatureCollection',
-          features: polys.map((f, i) => ({ type: 'Feature', id: i, geometry: f.geometry, properties: { name: brigade.name, areaName: f.name } })),
-        },
-      });
-      if (!name) setName(polys.length === 1 && polys[0]!.name !== '(sin nombre)' ? polys[0]!.name : file.name.replace(/\.(kmz|kml)$/i, ''));
-    } catch (e) {
-      setReadError(e instanceof Error ? e.message : 'No se pudo leer el archivo');
-    } finally {
-      setReading(false);
-    }
-  };
-
-  const save = useMutation({
-    mutationFn: () => api(`/brigades/${brigade.id}/area`, {
-      method: 'PUT',
-      body: JSON.stringify({ name: name.trim(), sourceFile: data!.fileName, geometries: data!.geometries }),
-    }),
-    onSuccess: onSaved,
-  });
-
-  return (
-    <Dialog
-      wide
-      title={`Polígono de trabajo · ${brigade.name}`}
-      onClose={onClose}
-      onSubmit={() => save.mutate()}
-      footer={<><button type="button" className="btn" onClick={onClose}>Cancelar</button><button className="btn btn-primary" disabled={save.isPending || !data || !name.trim()}>{save.isPending ? 'Guardando…' : 'Guardar polígono'}</button></>}
-    >
-      <ErrorBox error={save.error ?? (readError ? new Error(readError) : null)} />
-      <p className="hint" style={{ marginTop: 0 }}>
-        Las fotos que tome la brigada fuera de este polígono se advierten en el teléfono y se marcan para el supervisor.
-        Si el archivo trae varios polígonos, se unen en uno solo.
-      </p>
-      <div className="grid-2">
-        <div className="field">
-          <label htmlFor="a-file">Archivo KMZ o KML</label>
-          <input id="a-file" className="input" type="file" accept=".kmz,.kml" onChange={(e) => void onFile(e.target.files?.[0])} />
-          {reading && <span className="hint">Leyendo…</span>}
-          {data && <span className="hint">{data.geometries.length} polígono{data.geometries.length === 1 ? '' : 's'}: {data.names.slice(0, 4).join(', ')}{data.names.length > 4 ? '…' : ''}</span>}
-        </div>
-        <div className="field">
-          <label htmlFor="a-name">Nombre del polígono</label>
-          <input id="a-name" className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Zona de trabajo Sierra 2" required />
-        </div>
-      </div>
-      {data && <MapView areas={data.preview} height={300} />}
     </Dialog>
   );
 }

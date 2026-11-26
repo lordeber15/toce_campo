@@ -12,6 +12,7 @@ import { MediaViewer } from '../components/MediaViewer';
 import { useAuth } from '../lib/auth';
 import { useProject } from '../lib/project';
 import { ErrorBox, NoProject } from '../components/Dialog';
+import { DateRange } from '../components/Filters';
 
 type Tab = 'jornadas' | 'alertas' | 'consultas' | 'logistica';
 const STATUS_CHIP: Record<ExecutionStatus, string> = { completada: 'chip chip-ok', no_realizada: 'chip chip-off', en_curso: 'chip chip-warn', fotos_ok: 'chip chip-warn' };
@@ -128,14 +129,8 @@ export function MyRecordsPage() {
           <div className="segmented" role="group" aria-label="Período">
             {RANGES.map((r) => <button key={r.key} type="button" aria-pressed={range === r.key} onClick={() => pickRange(r.key)}>{r.label}</button>)}
           </div>
-          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <span className="hint">Desde</span>
-            <input className="input" type="date" value={range === 'all' ? '' : from} max={to} onChange={(e) => { setFrom(e.target.value); setRange('custom'); }} />
-          </label>
-          <label style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <span className="hint">Hasta</span>
-            <input className="input" type="date" value={range === 'all' ? '' : to} min={from} onChange={(e) => { setTo(e.target.value); setRange('custom'); }} />
-          </label>
+          <DateRange bounded from={range === 'all' ? '' : from} to={range === 'all' ? '' : to}
+            onFrom={(v) => { setFrom(v); setRange('custom'); }} onTo={(v) => { setTo(v); setRange('custom'); }} />
           {brigadeId && <Link to={`/mi-brigada/${brigadeId}`} className="btn btn-sm" style={{ marginLeft: 'auto' }}>Avance de la brigada →</Link>}
         </div>
       </div>

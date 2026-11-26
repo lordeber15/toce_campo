@@ -8,6 +8,7 @@ import {
 import { api, download } from '../lib/api';
 import { useProject } from '../lib/project';
 import { ErrorBox, NoProject } from '../components/Dialog';
+import { StatTile } from '../components/StatTile';
 import { ProgressBar } from '../components/ProgressChart';
 import { FLAG_CHIP, MetricTiles, since } from './Tracking';
 
@@ -61,12 +62,12 @@ export function ReportsPage() {
         <div style={{ opacity: q.isPlaceholderData ? 0.6 : 1 }}>
           <div className="section-title">Día {d8(r.date)}{isToday ? ' (hoy)' : ''}</div>
           <div className="stats" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(165px, 1fr))', marginBottom: 16 }}>
-            <Tile label="Estaciones del día" value={`${r.day.stationsExecuted}/${r.day.stationsPlanned}`} hint="ejecutadas / programadas" />
-            <Tile label="Unidades ejecutadas" value={`${r.day.units}`} hint={`${r.day.unitsCompleted} completadas`} />
-            <Tile label="Registros" value={`${r.day.records}`} hint="anotados en formularios" />
-            <Tile label="Fotos" value={`${r.day.photos}`} />
-            <Tile label="Incidencias" value={`${r.day.incidents}`} warn={r.day.incidents > 0} />
-            <Tile label="Reprogramaciones" value={`${r.reschedules.length}`} hint="propuestas o aprobadas ese día" />
+            <StatTile label="Estaciones del día" value={`${r.day.stationsExecuted}/${r.day.stationsPlanned}`} hint="ejecutadas / programadas" />
+            <StatTile label="Unidades ejecutadas" value={`${r.day.units}`} hint={`${r.day.unitsCompleted} completadas`} />
+            <StatTile label="Registros" value={`${r.day.records}`} hint="anotados en formularios" />
+            <StatTile label="Fotos" value={`${r.day.photos}`} />
+            <StatTile label="Incidencias" value={`${r.day.incidents}`} warn={r.day.incidents > 0} />
+            <StatTile label="Reprogramaciones" value={`${r.reschedules.length}`} hint="propuestas o aprobadas ese día" />
           </div>
 
           <div className="section-title">Avance acumulado del proyecto</div>
@@ -201,12 +202,3 @@ function Section({ title, count, empty, children }: { title: string; count: numb
   );
 }
 
-function Tile({ label, value, hint, warn }: { label: string; value: string; hint?: string; warn?: boolean }) {
-  return (
-    <div className="card stat">
-      <div className="label">{label}</div>
-      <div className="value" style={{ color: warn ? 'var(--danger)' : undefined }}>{value}</div>
-      {hint && <div className="hint">{hint}</div>}
-    </div>
-  );
-}

@@ -2,7 +2,7 @@ import type { WpGeometry, WpLayer } from './workPackage.js';
 
 /**
  * Verificación espacial en el teléfono (sin conexión): en qué capas del proyecto cae un punto.
- * Misma regla que el servidor al clasificar estaciones: AID tiene prioridad sobre AII;
+ * Misma regla que el servidor al clasificar estaciones: Huella > AID > AII (si hay capas AID/AII);
  * la unidad de vegetación es la de menor área que lo contiene.
  */
 
@@ -51,7 +51,7 @@ function geometryArea(g: WpGeometry): number {
 
 export type PointAreas = {
   /** null si el proyecto no tiene capas AID/AII. */
-  influence: 'AID' | 'AII' | 'fuera' | null;
+  influence: 'Huella' | 'AID' | 'AII' | 'fuera' | null;
   /** null si no hay capas UV; '' si las hay pero el punto no cae en ninguna. */
   vegetation: string | null;
   overlaps: string[];
@@ -63,7 +63,10 @@ export function classifyPoint(layers: WpLayer[], lat: number, lng: number): Poin
   const hits = layers.filter((l) => pointInGeometry(lng, lat, l.geometry));
   const hit = (k: WpLayer['kind']) => hits.filter((l) => l.kind === k);
 
-  const influence = has('aid') || has('aii') ? (hit('aid').length ? 'AID' : hit('aii').length ? 'AII' : 'fuera') : null;
+  const influence =
+    has('aid') || has('aii')
+      ? hit('huella').length ? 'Huella' : hit('aid').length ? 'AID' : hit('aii').length ? 'AII' : 'fuera'
+      : null;
   const uv = hit('uv').sort((a, b) => geometryArea(a.geometry) - geometryArea(b.geometry))[0];
   return {
     influence,

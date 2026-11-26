@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  INQUIRY_CHANNEL_LABELS, INQUIRY_CHANNELS, INQUIRY_FILE_MAX_BYTES, INQUIRY_FILE_TYPES, INQUIRY_MESSAGE_KIND_LABELS,
-  INQUIRY_STATUS_LABELS, INQUIRY_STATUSES,
-  type InquiryChannel, type InquiryDetail, type InquiryFile, type InquiryOptions, type InquiryRow, type InquiryStatus,
+  INQUIRY_CHANNEL_LABELS, INQUIRY_CHANNELS, INQUIRY_MESSAGE_KIND_LABELS, INQUIRY_STATUS_LABELS, INQUIRY_STATUSES,
+  type InquiryChannel, type InquiryDetail, type InquiryOptions, type InquiryRow, type InquiryStatus,
 } from '@toce/shared';
 import { api } from '../lib/api';
-import { MediaViewer } from '../components/MediaViewer';
+import { FileLink, FilePicker, fileProblem, uploadFiles } from '../components/Attachments';
+import { BrigadeSelect } from '../components/Filters';
 import { useProject } from '../lib/project';
 import { Dialog, ErrorBox, NoProject } from '../components/Dialog';
 
@@ -14,23 +14,8 @@ const STATUS_CHIP: Record<InquiryStatus, string> = { abierta: 'chip chip-warn', 
 const when = (iso: string) =>
   new Date(iso).toLocaleString('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
 const OTHER_CHANNELS = INQUIRY_CHANNELS.filter((c) => c !== 'app');
-const ACCEPT = INQUIRY_FILE_TYPES.join(',');
-const mb = (b: number) => `${(b / (1024 * 1024)).toLocaleString('es-PE', { maximumFractionDigits: 1 })} MB`;
-
-/** Revisa tipo y tamaño antes de subir. */
-function fileProblem(files: File[]) {
-  const bad = files.find((f) => !(INQUIRY_FILE_TYPES as readonly string[]).includes(f.type));
-  if (bad) return `“${bad.name}” no es un tipo admitido (fotos, PDF, audio, Excel o Word).`;
-  const big = files.find((f) => f.size > INQUIRY_FILE_MAX_BYTES);
-  if (big) return `“${big.name}” pesa ${mb(big.size)}; el máximo es ${mb(INQUIRY_FILE_MAX_BYTES)}.`;
-  return null;
-}
-
-async function uploadAll(messageId: string, files: File[]) {
-  for (const f of files) {
-    await api(`/inquiry-messages/${messageId}/files?name=${encodeURIComponent(f.name)}`, { method: 'PUT', body: f, headers: { 'content-type': f.type } });
-  }
-}
+const uploadAll = (messageId: string, files: File[]) =>
+  uploadFiles((f) => `/inquiry-messages/${messageId}/files?name=${encodeURIComponent(f.name)}`, files);
 
 /** Consultas (5.4): preguntas de coordinación a campo, respuestas, llamadas registradas, adjuntos e historial. */
 export function InquiriesPage() {
@@ -80,17 +65,14 @@ export function InquiriesPage() {
         <div className="card stat"><div className="label">Respondidas por revisar</div><div className="value" style={{ color: answered ? 'var(--primary)' : undefined }}>{answered}</div></div>
         <div className="card stat"><div className="label">Mostradas</div><div className="value">{rows.length}</div></div>
       </div>
-      <div className="split" style={{ gridTemplateColumns: 'minmax(300px, 420px) 1fr' }}>
+      <div className="split" style={{ '--split-cols': 'minmax(300px, 420px) 1fr' } as React.CSSProperties}>
         <div className="card">
           <div className="toolbar" style={{ flexWrap: 'wrap' }}>
             <select className="input" value={status} onChange={(e) => { setStatus(e.target.value as InquiryStatus | ''); setSelected(null); }} aria-label="Estado">
               <option value="">Todos los estados</option>
               {INQUIRY_STATUSES.map((s) => <option key={s} value={s}>{INQUIRY_STATUS_LABELS[s]}</option>)}
             </select>
-            <select className="input" value={brigadeId} onChange={(e) => { setBrigadeId(e.target.value); setSelected(null); }} aria-label="Brigada">
-              <option value="">Todas las brigadas</option>
-              {options.data?.brigades.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
+            <BrigadeSelect value={brigadeId} onChange={(v) => { setBrigadeId(v); setSelected(null); }} brigades={options.data?.brigades ?? []} />
             <input className="input" type="search" value={text} onChange={(e) => { setText(e.target.value); setSelected(null); }} placeholder="Buscar asunto, persona, estación o texto" aria-label="Buscar" />
           </div>
           <div className="list scroll-y" style={{ maxHeight: 'calc(100vh - 300px)', opacity: list.isPlaceholderData ? 0.6 : 1 }}>
@@ -237,23 +219,6 @@ function NewInquiryDialog({ projectId, options, onClose, onCreated }: {
   );
 }
 
-function FilePicker({ files, onChange }: { files: File[]; onChange: (f: File[]) => void }) {
-  const ref = useRef<HTMLInputElement>(null);
-  return (
-    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 12 }}>
-      <input ref={ref} type="file" multiple accept={ACCEPT} hidden onChange={(e) => { onChange([...files, ...Array.from(e.target.files ?? [])]); e.target.value = ''; }} />
-      <button type="button" className="btn btn-sm" onClick={() => ref.current?.click()}>Adjuntar evidencias</button>
-      {files.map((f, i) => (
-        <span key={i} className="chip" style={{ gap: 4 }}>
-          {f.name} ({mb(f.size)})
-          <button type="button" className="icon-btn" style={{ width: 18, height: 18, fontSize: 14 }} onClick={() => onChange(files.filter((_, j) => j !== i))} aria-label={`Quitar ${f.name}`}>×</button>
-        </span>
-      ))}
-      {!files.length && <span className="hint">Fotos, PDF, audio, Excel o Word; hasta 25 MB cada uno.</span>}
-    </div>
-  );
-}
-
 function InquiryView({ id }: { id: string }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['inquiry', id], queryFn: () => api<InquiryDetail>(`/inquiries/${id}`), refetchInterval: 60_000 });
@@ -301,7 +266,7 @@ function InquiryView({ id }: { id: string }) {
               <div style={{ whiteSpace: 'pre-wrap' }}>{m.body}</div>
               {m.files.length > 0 && (
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 6 }}>
-                  {m.files.map((f) => <FileLink key={f.id} file={f} />)}
+                  {m.files.map((f) => <FileLink key={f.id} file={f} endpoint="/inquiry-files/" fallbackName={f.kind === 'foto' ? 'Foto de campo' : 'archivo'} />)}
                 </div>
               )}
             </div>
@@ -317,29 +282,6 @@ function InquiryView({ id }: { id: string }) {
           : <button className="btn" disabled={toggle.isPending} onClick={() => confirm('¿Cerrar la consulta? Queda en el historial y se puede reabrir.') && toggle.mutate('close')}>Cerrar consulta</button>}
       </div>
     </div>
-  );
-}
-
-function FileLink({ file }: { file: InquiryFile }) {
-  const [open, setOpen] = useState(false);
-  const icon = file.kind === 'foto' ? '🖼' : file.kind === 'audio' ? '🎧' : '📄';
-  const name = file.name ?? (file.kind === 'foto' ? 'Foto de campo' : 'archivo');
-  return (
-    <>
-      <button type="button" className="chip" onClick={() => setOpen(true)} title="Ver" style={{ cursor: 'pointer', border: 0 }}>
-        {icon} {name}{file.sizeBytes ? ` (${mb(file.sizeBytes)})` : ''}
-      </button>
-      {open && (
-        <MediaViewer
-          title={name}
-          kind={file.kind}
-          mimeType={file.mimeType}
-          queryKey={['/inquiry-files/', file.id]}
-          load={() => api<{ url: string }>(`/inquiry-files/${file.id}/url`).then((r) => r.url)}
-          onClose={() => setOpen(false)}
-        />
-      )}
-    </>
   );
 }
 

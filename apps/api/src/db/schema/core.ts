@@ -1,13 +1,16 @@
-import { pgTable, text, boolean, uuid, timestamp, index, uniqueIndex, pgEnum, jsonb } from 'drizzle-orm/pg-core';
+import { pgTable, text, boolean, uuid, timestamp, index, uniqueIndex, pgEnum, jsonb, primaryKey } from 'drizzle-orm/pg-core';
 import { ROLES } from '@toce/shared';
 import { id, createdAt, updatedAt, deletedAt } from './_common.js';
 
 export const roleEnum = pgEnum('role', ROLES);
 
-/** Especialidades: Aves, Mastofauna, Herpetofauna, Entomofauna, Flora. */
+/**
+ * Especialidades (fuente de verdad): las iniciales (AVE, MAS, HER, ENT, FLO) y las que crea la carga masiva
+ * (Flora y vegetación, Mamíferos menores terrestres, Fauna transversal, Mixta...).
+ */
 export const specialties = pgTable('specialties', {
   id: id(),
-  code: text('code').notNull().unique(), // AVE, MAS, HER, ENT, FLO
+  code: text('code').notNull().unique(), // AVE, MAS, ... o generado (FLORA-Y-VEGETACION)
   name: text('name').notNull(),
   icon: text('icon'),
   sortOrder: text('sort_order'),
@@ -15,6 +18,24 @@ export const specialties = pgTable('specialties', {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 });
+
+/**
+ * Acceso transversal: quien tiene la especialidad `specialtyId` también ve (y puede asumir) los métodos de
+ * `grantedId` (p. ej. Mamíferos -> Mamíferos mayores, Fauna transversal). Su propia especialidad siempre la ve.
+ */
+export const specialtyAccess = pgTable(
+  'specialty_access',
+  {
+    specialtyId: uuid('specialty_id')
+      .notNull()
+      .references(() => specialties.id, { onDelete: 'cascade' }),
+    grantedId: uuid('granted_id')
+      .notNull()
+      .references(() => specialties.id, { onDelete: 'cascade' }),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.specialtyId, t.grantedId] })],
+);
 
 export const users = pgTable(
   'users',

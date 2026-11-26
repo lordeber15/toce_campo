@@ -1,6 +1,10 @@
 import { z } from 'zod';
 
 const uuid = z.string().uuid();
+
+/** Área de influencia de una estación. Si se solapan: Huella > AID > AII. */
+export const INFLUENCE_AREAS = ['Huella', 'AID', 'AII', 'fuera'] as const;
+export type InfluenceArea = (typeof INFLUENCE_AREAS)[number];
 const optText = z.string().trim().max(500).nullish();
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Fecha inválida (AAAA-MM-DD)');
 
@@ -15,15 +19,15 @@ export const projectSchema = z.object({
   utmZone: z.number().int().min(1).max(60).nullish(),
 });
 
-/** Polígono de trabajo de una brigada: geometrías del KMZ (se unen en el servidor). */
-export const brigadeAreaSchema = z.object({
-  name: z.string().trim().min(1).max(200),
-  sourceFile: z.string().max(255).nullish(),
-  geometries: z.array(z.object({ type: z.enum(['Polygon', 'MultiPolygon']), coordinates: z.array(z.any()) })).min(1).max(20000),
-});
+export const BRIGADE_REGIONS = ['COSTA', 'SIERRA', 'SELVA'] as const;
+export type BrigadeRegion = (typeof BRIGADE_REGIONS)[number];
 
 export const brigadeSchema = z.object({
   name: z.string().trim().min(2).max(80),
+  /** Código corto único en el proyecto (SIERRA 1). Se guarda en mayúsculas. */
+  code: z.string().trim().min(1).max(30).transform((v) => v.toUpperCase()).nullish(),
+  region: z.enum(BRIGADE_REGIONS).nullish(),
+  notes: z.string().max(2000).nullish(),
   specialtyId: uuid.nullish(),
   leaderId: uuid.nullish(),
   logisticianId: uuid.nullish(),
@@ -39,7 +43,7 @@ export const stationSchema = z.object({
   lng: z.number().min(-180).max(180),
   altitude: z.number().int().nullish(),
   vegetationUnit: optText,
-  influenceArea: z.enum(['AID', 'AII', 'fuera']).nullish(),
+  influenceArea: z.enum(INFLUENCE_AREAS).nullish(),
   overlap: optText,
   accessNotes: z.string().max(2000).nullish(),
 });
@@ -80,8 +84,20 @@ const formFieldSchema = z.object({
   auto: z.boolean().optional(),
 });
 
+/** Clase del método (plantilla de carga masiva). EVENTO = abierto: las unidades se crean en campo. */
+export const METHOD_CLASSES = ['todas', 'condicional', 'evento', 'atributo', 'transversal'] as const;
+export type MethodClass = (typeof METHOD_CLASSES)[number];
+
 export const methodUpdateSchema = z.object({
   name: z.string().trim().min(2).max(120).optional(),
+  methodClass: z.enum(METHOD_CLASSES).nullish(),
+  /** El método se ejecuta con recorrido GPS (track). */
+  requiresTrack: z.boolean().optional(),
+  photosPerUnit: z.number().int().min(0).max(100).nullish(),
+  /** Horario sugerido en texto libre ("06:00–10:00; 19:00–21:00"). */
+  scheduleText: z.string().max(500).nullish(),
+  /** Directriz compacta (condición de aplicación). */
+  guideline: z.string().max(8000).nullish(),
   description: z.string().max(2000).nullish(),
   instructions: z.string().max(4000).nullish(),
   isOpenEnded: z.boolean().optional(),
@@ -124,7 +140,10 @@ export const layersImportSchema = z.object({
   sourceFile: z.string().trim().max(200).optional(),
   /** Nombre del documento KML ("TOCE – Brigada Costa 1"): raíz del árbol de capas. */
   sourceTitle: z.string().trim().max(200).nullish(),
-  /** Brigada dueña del KMZ: en el teléfono solo lo reciben sus integrantes. Sin brigada = todo el proyecto. */
+  /**
+   * Brigada dueña del KMZ: sus polígonos forman el polígono de trabajo de la brigada y su extent, el mapa offline;
+   * en el teléfono solo lo reciben sus integrantes. Sin brigada = capa general (cada teléfono recibe la parte de su zona).
+   */
   brigadeId: z.string().uuid().nullish(),
   /** Reemplaza las capas importadas antes desde un archivo con el mismo nombre. */
   replaceSameSource: z.boolean().default(true),

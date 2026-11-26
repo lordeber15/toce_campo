@@ -58,8 +58,11 @@ export const projectLayers = pgTable(
     index('project_layers_project_idx').on(t.projectId),
     index('project_layers_source_idx').on(t.projectId, t.sourceFile),
     index('project_layers_geom_idx').using('gist', t.geom),
+    index('project_layers_brigade_idx').on(t.brigadeId),
   ],
 );
+
+export const brigadeRegionEnum = pgEnum('brigade_region', ['COSTA', 'SIERRA', 'SELVA']);
 
 export const brigades = pgTable(
   'brigades',
@@ -68,12 +71,22 @@ export const brigades = pgTable(
     projectId: uuid('project_id')
       .notNull()
       .references(() => projects.id, { onDelete: 'cascade' }),
+    /** Código corto único en el proyecto, en mayúsculas (SIERRA 1). Opcional para brigadas antiguas. */
+    code: text('code'),
     name: text('name').notNull(), // Sierra 2, Herpeto 1, Flora 1
+    region: brigadeRegionEnum('region'),
+    notes: text('notes'),
+    /** null = brigada mixta: ve todos los métodos (filtrados por la especialidad de cada usuario). */
     specialtyId: uuid('specialty_id').references(() => specialties.id),
     leaderId: uuid('leader_id').references(() => users.id), // jefe de brigada
     logisticianId: uuid('logistician_id').references(() => users.id),
     supervisorId: uuid('supervisor_id').references(() => users.id),
-    /** Polígono de trabajo asignado (KMZ): las fotos fuera de él se advierten y se marcan. */
+    /**
+     * Polígono de trabajo (derivado, no se edita a mano): unión de los polígonos de las capas KMZ
+     * asignadas a la brigada en "Mapa y capas" (project_layers.brigade_id). Lo recalcula
+     * syncBrigadeAreas (lib/brigadeAreas.ts) al importar, reasignar o borrar capas.
+     * Las fotos fuera de él se advierten y se marcan.
+     */
     areaGeom: anyGeom('area_geom'),
     areaName: text('area_name'),
     areaSourceFile: text('area_source_file'),
@@ -81,7 +94,11 @@ export const brigades = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [index('brigades_project_idx').on(t.projectId), uniqueIndex('brigades_project_name_idx').on(t.projectId, t.name)],
+  (t) => [
+    index('brigades_project_idx').on(t.projectId),
+    uniqueIndex('brigades_project_name_idx').on(t.projectId, t.name),
+    uniqueIndex('brigades_project_code_idx').on(t.projectId, t.code),
+  ],
 );
 
 export const brigadeMembers = pgTable(
@@ -96,9 +113,14 @@ export const brigadeMembers = pgTable(
       .references(() => users.id, { onDelete: 'cascade' }),
     joinedAt: createdAt(),
     leftAt: timestamp('left_at', { withTimezone: true }),
+    /** Vigencia planificada en la brigada (plantilla: Desde / Hasta). No la desactiva: eso es left_at. */
+    validFrom: date('valid_from'),
+    validTo: date('valid_to'),
   },
   (t) => [uniqueIndex('brigade_members_unique_idx').on(t.brigadeId, t.userId), index('brigade_members_user_idx').on(t.userId)],
 );
+
+export const methodClassEnum = pgEnum('method_class', ['todas', 'condicional', 'evento', 'atributo', 'transversal']);
 
 /** Métodos de muestreo: PC, L20, ABS, RO, CT, SH, TH, VES, CD, PF, PT, TL, TV, CH, PP, EP ... */
 export const methods = pgTable(
@@ -115,8 +137,18 @@ export const methods = pgTable(
     /** Si true, las unidades se crean al vuelo sin límite (registros oportunos). */
     isOpenEnded: boolean('is_open_ended').notNull().default(false),
     defaultUnitsRequired: integer('default_units_required').notNull().default(1),
+    /** Clase en la plantilla: todas | condicional | evento (abierto) | atributo | transversal. */
+    methodClass: methodClassEnum('method_class'),
+    /** Se ejecuta con recorrido GPS (track). */
+    requiresTrack: boolean('requires_track').notNull().default(false),
+    /** Fotos por unidad de muestreo (null = regla propia del método). */
+    photosPerUnit: integer('photos_per_unit'),
     scheduleStart: time('schedule_start'), // horario de ejecución sugerido
     scheduleEnd: time('schedule_end'),
+    /** Horario en texto libre ("06:00–10:00; 19:00–21:00"). */
+    scheduleText: text('schedule_text'),
+    /** Directriz compacta (condición de aplicación). */
+    guideline: text('guideline'),
     minDurationMin: integer('min_duration_min'),
     requirements: text('requirements').array().notNull().default([]),
     photoSlots: jsonb('photo_slots').$type<PhotoSlot[]>().notNull().default([]),
@@ -147,7 +179,11 @@ export const stations = pgTable(
     altitude: integer('altitude'),
     vegetationUnit: text('vegetation_unit'), // Bosque montano 1 (BAPa)
     vegetationLayerId: uuid('vegetation_layer_id').references(() => projectLayers.id),
-    influenceArea: text('influence_area'), // AID | AII | fuera
+    influenceArea: text('influence_area'), // Huella | AID | AII | fuera
+    /** Si true, la clasificación con capas KMZ no cambia el área de influencia (la fijó un usuario). */
+    influenceLocked: boolean('influence_locked').notNull().default(false),
+    /** Si true, la clasificación con capas KMZ no cambia la unidad de vegetación. */
+    vegetationLocked: boolean('vegetation_locked').notNull().default(false),
     overlap: text('overlap'), // EF: San Pedro de Chonta / ACR / ninguna
     accessNotes: text('access_notes'),
     status: stationStatusEnum('status').notNull().default('planificada'),
@@ -174,10 +210,12 @@ export const stationMethods = pgTable(
       .references(() => methods.id),
     unitsRequired: integer('units_required').notNull().default(1),
     notes: text('notes'),
+    /** Brigada que ejecuta el método en la estación (null = cualquiera programada allí). */
+    brigadeId: uuid('brigade_id').references(() => brigades.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex('station_methods_unique_idx').on(t.stationId, t.methodId)],
+  (t) => [uniqueIndex('station_methods_unique_idx').on(t.stationId, t.methodId), index('station_methods_brigade_idx').on(t.brigadeId)],
 );
 
 export const unitStatusEnum = pgEnum('unit_status', [
@@ -227,7 +265,12 @@ export const scheduleStatusEnum = pgEnum('schedule_status', [
   'cancelada',
 ]);
 
-/** Cronograma: brigada -> estación en una fecha. Varias estaciones por día permitidas. */
+export const activityTypeEnum = pgEnum('activity_type', ['estacion', 'movilizacion', 'desmovilizacion', 'descanso', 'otro']);
+
+/**
+ * Cronograma: brigada -> estación en una fecha (varias por día), o una actividad sin estación
+ * (movilización, desmovilización, descanso, otro).
+ */
 export const schedules = pgTable(
   'schedules',
   {
@@ -238,9 +281,11 @@ export const schedules = pgTable(
     brigadeId: uuid('brigade_id')
       .notNull()
       .references(() => brigades.id, { onDelete: 'cascade' }),
-    stationId: uuid('station_id')
-      .notNull()
-      .references(() => stations.id, { onDelete: 'cascade' }),
+    /** null en actividades que no son de estación. */
+    stationId: uuid('station_id').references(() => stations.id, { onDelete: 'cascade' }),
+    activityType: activityTypeEnum('activity_type').notNull().default('estacion'),
+    /** Detalle operativo ("Movilización - Trujillo"). */
+    detail: text('detail'),
     plannedDate: date('planned_date').notNull(),
     originalDate: date('original_date').notNull(),
     sortOrder: integer('sort_order').notNull().default(0),

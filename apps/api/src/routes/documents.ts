@@ -115,8 +115,8 @@ const documentsRoutes: FastifyPluginAsync = async (app) => {
   r.get('/projects/:projectId/files/facets', { onRequest: read, schema: { params: projectParam } }, async (req): Promise<FilesFacets> => {
     const p = req.params.projectId;
     const ids = await db.execute(sql`${LIBRARY(p)} SELECT
-      array_remove(array_agg(DISTINCT brigade_id), NULL) AS b, array_remove(array_agg(DISTINCT person_id), NULL) AS u,
-      array_remove(array_agg(DISTINCT station_id), NULL) AS s, array_remove(array_agg(DISTINCT method_id), NULL) AS m FROM lib`);
+      coalesce(array_remove(array_agg(DISTINCT brigade_id), NULL), '{}') AS b, coalesce(array_remove(array_agg(DISTINCT person_id), NULL), '{}') AS u,
+      coalesce(array_remove(array_agg(DISTINCT station_id), NULL), '{}') AS s, coalesce(array_remove(array_agg(DISTINCT method_id), NULL), '{}') AS m FROM lib`);
     const x = ids.rows[0] as { b: string[]; u: string[]; s: string[]; m: string[] };
     const any = (list: string[]) => sql`ANY(${`{${list.join(',')}}`}::uuid[])`;
     const [brigades, people, stations, methods] = await Promise.all([

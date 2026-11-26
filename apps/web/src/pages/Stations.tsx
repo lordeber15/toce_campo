@@ -1,11 +1,11 @@
-import { useMemo, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { FeatureCollection } from 'geojson';
-import { ADMIN_ROLES, formatUtm, latLngToUtm, utmToLatLng } from '@toce/shared';
+import { Link } from 'react-router';
+import { ADMIN_ROLES, INFLUENCE_AREAS, formatUtm, latLngToUtm, utmToLatLng } from '@toce/shared';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { useProject } from '../lib/project';
-import { pick, readTable } from '../lib/tabular';
 import { MapLegend, MapView } from '../components/MapView';
 import { Dialog, ErrorBox, NoProject } from '../components/Dialog';
 
@@ -13,6 +13,8 @@ export type StationMethod = { methodId: string; code: string; name: string; spec
 export type Station = {
   id: string; code: string; name: string | null; lat: number; lng: number; altitude: number | null;
   vegetationUnit: string | null; influenceArea: string | null; overlap: string | null; accessNotes: string | null; status: string;
+  /** Fijados a mano (carga masiva o edición): las capas KMZ ya no los cambian. */
+  influenceLocked?: boolean; vegetationLocked?: boolean;
   methods: StationMethod[]; units: number; schedules: number;
 };
 type Specialty = { id: string; code: string; name: string };
@@ -30,7 +32,6 @@ export function StationsPage() {
   const [q, setQ] = useState('');
   const [editing, setEditing] = useState<Station | 'new' | null>(null);
   const [editingMethods, setEditingMethods] = useState<Station | null>(null);
-  const [importOpen, setImportOpen] = useState(false);
 
   const stations = useQuery({ queryKey: ['stations', project?.id], enabled: !!project, queryFn: () => api<Station[]>(`/projects/${project!.id}/stations`) });
   const layers = useQuery({ queryKey: ['layers', project?.id], enabled: !!project, queryFn: () => api<FeatureCollection>(`/projects/${project!.id}/layers`) });
@@ -53,8 +54,8 @@ export function StationsPage() {
         </div>
         {isAdmin && (
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn" onClick={() => setImportOpen(true)}>Importar Excel / CSV</button>
-            <button className="btn btn-primary" onClick={() => setEditing('new')}>Nueva estación</button>
+            <Link className="btn" to="/carga-masiva" title="Las estaciones, sus métodos y el cronograma se cargan con la plantilla Excel">Carga masiva</Link>
+            <button className="btn" onClick={() => setEditing('new')}>Nueva estación</button>
           </div>
         )}
       </div>
@@ -84,7 +85,7 @@ export function StationsPage() {
               <div className="toolbar"><input className="input" placeholder="Buscar estación" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Buscar estación" /></div>
               <div className="list scroll-y" style={{ maxHeight: 560 }}>
                 {stations.isLoading && <div className="empty">Cargando…</div>}
-                {!stations.isLoading && !list.length && <div className="empty">No hay estaciones. Créalas aquí o impórtalas desde un KMZ en Mapa y capas.</div>}
+                {!stations.isLoading && !list.length && <div className="empty">{q ? 'Ninguna estación coincide con la búsqueda.' : <>No hay estaciones. Cárgalas con la plantilla en <Link to="/carga-masiva">Carga masiva</Link> (estaciones, métodos y cronograma a la vez).</>}</div>}
                 {list.map((s) => (
                   <button key={s.id} className="list-item" onClick={() => setSelected(s.id)}>
                     <div className="grow">
@@ -110,7 +111,6 @@ export function StationsPage() {
         />
       )}
       {editingMethods && <MethodsDialog station={editingMethods} onClose={() => setEditingMethods(null)} onSaved={() => { setEditingMethods(null); qc.invalidateQueries({ queryKey: ['stations'] }); qc.invalidateQueries({ queryKey: ['units'] }); }} />}
-      {importOpen && <ImportStationsDialog projectId={project.id} utmZone={project.utmZone ?? 18} onClose={() => setImportOpen(false)} onDone={() => { setImportOpen(false); qc.invalidateQueries({ queryKey: ['stations'] }); qc.invalidateQueries({ queryKey: ['projects'] }); }} />}
     </>
   );
 }
@@ -131,8 +131,8 @@ function StationDetail({ station: s, isAdmin, onBack, onEdit, onMethods, onDelet
         <dt>UTM</dt><dd>{formatUtm(utm)}</dd>
         <dt>Geográficas</dt><dd>{s.lat.toFixed(6)}, {s.lng.toFixed(6)}</dd>
         {s.altitude != null && <><dt>Altitud</dt><dd>{s.altitude} m s.n.m.</dd></>}
-        <dt>Ubicación</dt><dd>{s.influenceArea ?? '—'}</dd>
-        <dt>Unidad de vegetación</dt><dd>{s.vegetationUnit ?? '—'}</dd>
+        <dt>Ubicación</dt><dd>{s.influenceArea ?? '—'}{s.influenceLocked && <LockChip />}</dd>
+        <dt>Unidad de vegetación</dt><dd>{s.vegetationUnit ?? '—'}{s.vegetationLocked && <LockChip />}</dd>
         <dt>Superposición</dt><dd>{s.overlap ?? '—'}</dd>
         {s.accessNotes && <><dt>Acceso</dt><dd>{s.accessNotes}</dd></>}
       </dl>
@@ -173,7 +173,9 @@ function StationDialog({ projectId, utmZone, station, layers, onClose, onSaved }
     code: station?.code ?? '', name: station?.name ?? '', altitude: station?.altitude?.toString() ?? '', accessNotes: station?.accessNotes ?? '',
     lat: station?.lat.toFixed(6) ?? '', lng: station?.lng.toFixed(6) ?? '',
     zone: String(initUtm?.zone ?? utmZone), east: initUtm?.easting.toString() ?? '', north: initUtm?.northing.toString() ?? '',
+    influenceArea: station?.influenceArea ?? '', vegetationUnit: station?.vegetationUnit ?? '',
   });
+  const [locks, setLocks] = useState({ influence: !!station?.influenceLocked, vegetation: !!station?.vegetationLocked });
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
 
   const coords = useMemo(() => {
@@ -193,7 +195,13 @@ function StationDialog({ projectId, utmZone, station, layers, onClose, onSaved }
   const save = useMutation({
     mutationFn: async () => {
       if (!coords) throw new Error('Coordenadas inválidas');
-      const body = { code: f.code.trim(), name: f.name || null, lat: coords.lat, lng: coords.lng, altitude: f.altitude ? Math.round(Number(f.altitude)) : null, accessNotes: f.accessNotes || null };
+      const body: Record<string, unknown> = { code: f.code.trim(), name: f.name || null, lat: coords.lat, lng: coords.lng, altitude: f.altitude ? Math.round(Number(f.altitude)) : null, accessNotes: f.accessNotes || null };
+      // Bloqueado = el valor escrito aquí manda; sin bloqueo, las capas KMZ lo recalculan al guardar.
+      if (station) {
+        Object.assign(body, { influenceLocked: locks.influence, vegetationLocked: locks.vegetation });
+        if (locks.influence) body.influenceArea = f.influenceArea || null;
+        if (locks.vegetation) body.vegetationUnit = f.vegetationUnit.trim() || null;
+      }
       if (station) { await api(`/stations/${station.id}`, { method: 'PATCH', body: JSON.stringify(body) }); return station.id; }
       return (await api<{ id: string }>(`/projects/${projectId}/stations`, { method: 'POST', body: JSON.stringify(body) })).id;
     },
@@ -236,7 +244,32 @@ function StationDialog({ projectId, utmZone, station, layers, onClose, onSaved }
       )}
       <MapView layers={layers} stations={[]} pick={coords} onMapClick={setFromMap} height={260} fitKey={station?.id ?? 'new'} />
       <div className="field"><label htmlFor="s-acc">Indicaciones de acceso</label><textarea id="s-acc" className="input" value={f.accessNotes} onChange={set('accessNotes')} /></div>
-      <p className="hint">AID/AII, unidad de vegetación y superposición se calculan con las capas del proyecto al guardar.</p>
+      {station && (
+        <>
+          <span className="section-title" style={{ margin: 0 }}>Clasificación</span>
+          <div className="grid-2">
+            <div className="field">
+              <label htmlFor="s-area">Área de influencia</label>
+              <select id="s-area" className="input" value={f.influenceArea} disabled={!locks.influence}
+                onChange={(e) => setF({ ...f, influenceArea: e.target.value })}>
+                <option value="">Sin área</option>
+                {INFLUENCE_AREAS.map((a) => <option key={a} value={a}>{a === 'fuera' ? 'Fuera del área' : a}</option>)}
+              </select>
+              <LockToggle id="s-lock-area" locked={locks.influence} onChange={(v) => setLocks({ ...locks, influence: v })} />
+            </div>
+            <div className="field">
+              <label htmlFor="s-uv">Unidad de vegetación</label>
+              <input id="s-uv" className="input" value={f.vegetationUnit} disabled={!locks.vegetation} onChange={set('vegetationUnit')} />
+              <LockToggle id="s-lock-uv" locked={locks.vegetation} onChange={(v) => setLocks({ ...locks, vegetation: v })} />
+            </div>
+          </div>
+        </>
+      )}
+      <p className="hint">
+        {station
+          ? 'Sin fijar, el área (Huella, AID, AII), la unidad de vegetación y la superposición se calculan con las capas del proyecto al guardar. Fijado, se mantiene lo que escribas aunque cambien las capas.'
+          : 'Huella/AID/AII, unidad de vegetación y superposición se calculan con las capas del proyecto al guardar.'}
+      </p>
     </Dialog>
   );
 }
@@ -291,70 +324,16 @@ function MethodsDialog({ station, onClose, onSaved }: { station: Station; onClos
   );
 }
 
-function ImportStationsDialog({ projectId, utmZone, onClose, onDone }: { projectId: string; utmZone: number; onClose: () => void; onDone: () => void }) {
-  const [rows, setRows] = useState<{ code: string; name: string | null; lat: number; lng: number; altitude: number | null }[] | null>(null);
-  const [errors, setErrors] = useState<string[]>([]);
-  const [result, setResult] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+function LockChip() {
+  return <span className="chip lock-chip" title="Fijado a mano: las capas KMZ no lo cambian">Fijado</span>;
+}
 
-  async function onFile(file?: File) {
-    if (!file) return;
-    try {
-      const data = await readTable(file);
-      const ok: NonNullable<typeof rows> = [];
-      const errs: string[] = [];
-      data.forEach((r, i) => {
-        const code = pick(r, 'codigo', 'code', 'estacion', 'cod');
-        const e = Number(pick(r, 'este', 'easting', 'x', 'utm_este', 'e').replace(',', '.'));
-        const n = Number(pick(r, 'norte', 'northing', 'y', 'utm_norte', 'n').replace(',', '.'));
-        const lat = Number(pick(r, 'latitud', 'lat').replace(',', '.'));
-        const lng = Number(pick(r, 'longitud', 'lng', 'lon').replace(',', '.'));
-        const zone = Number(pick(r, 'zona', 'zone').replace(/\D/g, '')) || utmZone;
-        const alt = pick(r, 'altitud', 'altura', 'cota', 'alt');
-        let c: { lat: number; lng: number } | null = null;
-        if (e && n) c = utmToLatLng(zone, 'S', e, n);
-        else if (lat && lng) c = { lat, lng };
-        if (!code) errs.push(`Fila ${i + 2}: falta el código`);
-        else if (!c) errs.push(`Fila ${i + 2} (${code}): faltan coordenadas (Este/Norte o Latitud/Longitud)`);
-        else ok.push({ code: code.toUpperCase(), name: pick(r, 'nombre', 'name', 'descripcion') || null, lat: c.lat, lng: c.lng, altitude: alt ? Math.round(Number(alt.replace(',', '.'))) || null : null });
-      });
-      setRows(ok);
-      setErrors(errs);
-    } catch (e) {
-      setErrors([e instanceof Error ? e.message : 'No se pudo leer el archivo']);
-    }
-  }
-
-  const save = useMutation({
-    mutationFn: () => api<{ created: number; updated: number }>(`/projects/${projectId}/stations/import`, { method: 'POST', body: JSON.stringify({ stations: rows }) }),
-    onSuccess: (r) => setResult(`${r.created} estaciones nuevas y ${r.updated} actualizadas.`),
-  });
-
+function LockToggle({ id, locked, onChange }: { id: string; locked: boolean; onChange: (v: boolean) => void }) {
   return (
-    <Dialog
-      wide
-      title="Importar estaciones"
-      onClose={result ? onDone : onClose}
-      onSubmit={() => (result ? onDone() : save.mutate())}
-      footer={result ? <button className="btn btn-primary">Listo</button> : <><button type="button" className="btn" onClick={onClose}>Cancelar</button><button className="btn btn-primary" disabled={!rows?.length || save.isPending}>Importar {rows?.length ?? 0}</button></>}
-    >
-      <ErrorBox error={save.error} />
-      {result ? <div className="ok-text" style={{ fontSize: 15 }}>{result}</div> : (
-        <>
-          <p className="hint">Columnas reconocidas: <b>Código</b>, <b>Este</b> y <b>Norte</b> (UTM, zona {utmZone}S por defecto o columna <b>Zona</b>) o <b>Latitud</b>/<b>Longitud</b>, y opcionalmente <b>Nombre</b> y <b>Altitud</b>. Las estaciones con el mismo código se actualizan.</p>
-          <input ref={fileRef} type="file" accept=".xlsx,.csv" hidden onChange={(e) => onFile(e.target.files?.[0])} />
-          <button type="button" className="drop" onClick={() => fileRef.current?.click()}>{rows ? `${rows.length} estaciones listas · elegir otro archivo` : 'Elegir archivo .xlsx o .csv'}</button>
-          {errors.length > 0 && <div className="alert-error">{errors.slice(0, 8).map((e) => <div key={e}>{e}</div>)}{errors.length > 8 && <div>… y {errors.length - 8} más</div>}</div>}
-          {!!rows?.length && (
-            <div className="scroll-y" style={{ maxHeight: 240 }}>
-              <table><thead><tr><th>Código</th><th>Nombre</th><th>UTM</th><th>Altitud</th></tr></thead>
-                <tbody>{rows.map((r) => <tr key={r.code}><td>{r.code}</td><td>{r.name ?? '—'}</td><td className="muted">{formatUtm(latLngToUtm(r.lat, r.lng))}</td><td>{r.altitude ?? '—'}</td></tr>)}</tbody>
-              </table>
-            </div>
-          )}
-        </>
-      )}
-    </Dialog>
+    <label htmlFor={id} className="hint" style={{ display: 'flex', gap: 6, alignItems: 'center', fontWeight: 400 }}>
+      <input id={id} type="checkbox" checked={locked} onChange={(e) => onChange(e.target.checked)} />
+      {locked ? 'Fijado: las capas KMZ no lo cambian' : 'Calculado con las capas KMZ (marca para fijarlo)'}
+    </label>
   );
 }
 

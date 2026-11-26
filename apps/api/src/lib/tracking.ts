@@ -88,9 +88,10 @@ export async function computeTracking(projectId: string, opts: { today?: string;
       count(su.id) FILTER (WHERE su.status = 'no_realizada')::int AS "notDone",
       count(su.id) FILTER (WHERE su.status IN ('en_ejecucion', 'fotos_ok'))::int AS "inProgress",
       count(su.id)::int AS created
-    FROM (SELECT DISTINCT sc.brigade_id, sc.station_id FROM schedules sc WHERE sc.project_id = ${projectId} AND sc.status <> 'cancelada') g
+    FROM (SELECT DISTINCT sc.brigade_id, sc.station_id FROM schedules sc
+          WHERE sc.project_id = ${projectId} AND sc.status <> 'cancelada' AND sc.station_id IS NOT NULL) g
     JOIN brigades b ON b.id = g.brigade_id ${bFilter}
-    JOIN station_methods sm ON sm.station_id = g.station_id
+    JOIN station_methods sm ON sm.station_id = g.station_id AND (sm.brigade_id IS NULL OR sm.brigade_id = g.brigade_id)
     JOIN methods m ON m.id = sm.method_id AND (b.specialty_id IS NULL OR m.specialty_id = b.specialty_id)
     LEFT JOIN sampling_units su ON su.station_method_id = sm.id
     GROUP BY g.brigade_id, g.station_id, m.id, m.code, m.is_open_ended, m.sort_order, sm.units_required

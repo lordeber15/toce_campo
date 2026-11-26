@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import type { FormField, FormSchema, PhotoSlot, SpecialtyCode } from '@toce/shared';
+import type { BaseSpecialtyCode, FormField, FormSchema, PhotoSlot } from '@toce/shared';
 import { db, schema } from './index.js';
 
 /** Catálogo base: especialidades, métodos, fotos requeridas y formularios reducidos. Lo usan el seed y setup. */
@@ -15,7 +15,7 @@ const obs: FormField = { key: 'observaciones', label: 'Observaciones', type: 'te
 const ubic: FormField = { key: 'ubicacion', label: 'Ubicación del registro', type: 'coords', auto: true };
 const tipoRegistro = sel('tipo_registro', 'Tipo de registro', ['Visual', 'Auditivo', 'Visual y auditivo', 'Huella', 'Rastro', 'Captura', 'Fotografía']);
 
-const FORMS: Record<SpecialtyCode, FormSchema> = {
+const FORMS: Record<BaseSpecialtyCode, FormSchema> = {
   AVE: {
     fields: [
       ...base(),
@@ -91,6 +91,26 @@ const FORMS: Record<SpecialtyCode, FormSchema> = {
   },
 };
 
+/** Formulario genérico para especialidades sin formulario propio. */
+const GENERIC_FORM: FormSchema = { fields: [...base(), tipoRegistro, ubic, obs] };
+
+const fold = (v: string) => v.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+/**
+ * Formulario inicial para los métodos de una especialidad: el de su código si es una de las iniciales;
+ * si no, el más parecido por nombre (Aves, Anfibios y reptiles, Artrópodos, Mamíferos..., flora); si no, uno genérico.
+ */
+export function formForSpecialty(code: string, name: string): FormSchema {
+  if (code in FORMS) return FORMS[code as BaseSpecialtyCode];
+  const n = fold(name);
+  if (/\baves?\b/.test(n)) return FORMS.AVE;
+  if (/anfibio|reptil|herpet/.test(n)) return FORMS.HER;
+  if (/artropod|insect|entomo/.test(n)) return FORMS.ENT;
+  if (/mamifer|masto/.test(n)) return FORMS.MAS;
+  if (/flora|vegetac|forestal|epifit|bofedal|agrostolog|botan/.test(n)) return FORMS.FLO;
+  return GENERIC_FORM;
+}
+
 const slots = (...pairs: [string, string][]): PhotoSlot[] => pairs.map(([key, label]) => ({ key, label, required: true }));
 const NSEO = slots(['norte', 'Norte'], ['sur', 'Sur'], ['este', 'Este'], ['oeste', 'Oeste']);
 const FL = slots(['frontal', 'Frontal'], ['lateral', 'Lateral']);
@@ -98,7 +118,7 @@ const IF = slots(['inicio', 'Inicio'], ['fin', 'Fin']);
 const PAN = slots(['panoramica_lateral', 'Panorámica lateral'], ['panoramica_centro', 'Panorámica al centro']);
 
 type M = { code: string; name: string; units: number; slots: PhotoSlot[]; open?: boolean };
-const METHODS: Record<SpecialtyCode, M[]> = {
+const METHODS: Record<BaseSpecialtyCode, M[]> = {
   AVE: [
     { code: 'PC', name: 'Puntos de conteo', units: 10, slots: NSEO },
     { code: 'L20', name: 'Listas de 20 especies', units: 2, slots: NSEO },
@@ -133,7 +153,7 @@ const METHODS: Record<SpecialtyCode, M[]> = {
     { code: 'RO', name: 'Registros oportunos', units: 0, slots: [], open: true },
   ],
 };
-const SPECIALTIES: [SpecialtyCode, string, string][] = [
+const SPECIALTIES: [BaseSpecialtyCode, string, string][] = [
   ['AVE', 'Aves', '1'], ['MAS', 'Mastofauna', '2'], ['HER', 'Herpetofauna', '3'], ['ENT', 'Entomofauna', '4'], ['FLO', 'Flora', '5'],
 ];
 const METHOD_PHOTO = 'Toma una foto semipanorámica lateral donde se vea al especialista aplicando el método y el entorno circundante.';

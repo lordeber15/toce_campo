@@ -25,9 +25,11 @@ import { RecordDetailPage, RecordsPage } from './pages/Records';
 import { ReportsPage } from './pages/Reports';
 import { PhotoMapPage } from './pages/PhotoMap';
 import { GpsTracksPage } from './pages/GpsTracks';
+import { BulkImportPage } from './pages/BulkImport';
+import { ChangePasswordPage } from './pages/ChangePassword';
 
 export function App() {
-  const { user, loading, can } = useAuth();
+  const { user, loading, can, mustChangePassword } = useAuth();
   if (loading) return <div className="center">Cargando…</div>;
   if (!user) {
     return (
@@ -36,6 +38,8 @@ export function App() {
       </Routes>
     );
   }
+  // Primer ingreso (contraseña inicial = DNI): no se entra a nada hasta cambiarla.
+  if (mustChangePassword) return <ChangePasswordPage />;
   const viewer = can(...WEB_ROLES, 'jefe_proyecto');
   return (
     <ProjectProvider>
@@ -70,6 +74,7 @@ export function App() {
             </>
           )}
           {can(...ADMIN_ROLES) && <Route path="usuarios" element={<UsersPage />} />}
+          {can(...ADMIN_ROLES) && <Route path="carga-masiva" element={<BulkImportPage />} />}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>

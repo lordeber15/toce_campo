@@ -12,6 +12,7 @@ import { MediaViewer } from '../components/MediaViewer';
 import { useAuth } from '../lib/auth';
 import { useProject } from '../lib/project';
 import { ErrorBox, NoProject } from '../components/Dialog';
+import { RescheduleForm } from '../components/RescheduleForm';
 
 type Row = {
   id: string; type: IncidentType; moment: IncidentMoment | null; status: IncidentStatus; description: string; proposedAction: string | null;
@@ -93,7 +94,7 @@ export function AlertsPage() {
         </button>
         <div className="card stat"><div className="label">Mostradas</div><div className="value">{rows.length}</div></div>
       </div>
-      <div className="split" style={{ gridTemplateColumns: 'minmax(300px, 420px) 1fr' }}>
+      <div className="split" style={{ '--split-cols': 'minmax(300px, 420px) 1fr' } as React.CSSProperties}>
         <div className="card">
           <div className="toolbar">
             <select className="input" value={status} onChange={(e) => { setStatus(e.target.value as IncidentStatus | ''); setSelected(null); }} aria-label="Estado">
@@ -246,7 +247,7 @@ function AlertDetail({ id }: { id: string }) {
       <FollowUp detail={d} onDone={refresh} closed={closed} />
       <Thread detail={d} onSent={refresh} disabled={closed} />
       {admin && !closed && <DecisionForm detail={d} onDone={refresh} />}
-      {admin && !closed && d.schedules.length > 0 && <RescheduleForm detail={d} onDone={refresh} />}
+      {admin && !closed && d.schedules.length > 0 && <IncidentReschedule key={d.id} detail={d} onDone={refresh} />}
       {admin && (d.status === 'resuelta' || d.status === 'rechazada') && <CloseButton id={d.id} onDone={refresh} />}
     </div>
   );
@@ -341,50 +342,26 @@ function DecisionForm({ detail, onDone }: { detail: Detail; onDone: () => void }
   );
 }
 
-function RescheduleForm({ detail, onDone }: { detail: Detail; onDone: () => void }) {
+/** Reprogramar desde la alerta: mismo formulario que Reprogramaciones, limitado a las visitas de la alerta. */
+function IncidentReschedule({ detail, onDone }: { detail: Detail; onDone: () => void }) {
   const { can } = useAuth();
   // El supervisor propone; coordinación o la jefatura aprueban (en ese caso se aplica en el acto).
   const approver = can(...RESCHEDULE_APPROVER_ROLES);
   const pending = detail.reschedules.some((r) => r.status === 'propuesta');
   const initial = detail.schedules.find((s) => s.id === detail.scheduleId) ?? detail.schedules[0]!;
-  const [scheduleId, setScheduleId] = useState(initial.id);
-  const [newDate, setNewDate] = useState('');
-  const [reason, setReason] = useState(detail.type === 'lluvia_intensa' ? 'Lluvia intensa' : '');
-  const [reopen, setReopen] = useState(true);
-  const save = useMutation({
-    mutationFn: () => api<{ reopened: number }>(`/incidents/${detail.id}/reschedule`, { method: 'POST', body: JSON.stringify({ scheduleId, newDate, reason, reopenUnits: reopen }) }),
-    onSuccess: () => { setNewDate(''); onDone(); },
-  });
   return (
-    <div className="card" style={{ padding: 18, display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div className="section-title" style={{ margin: 0 }}>{approver ? 'Reprogramar visita' : 'Proponer reprogramación'}</div>
-      {pending && <p className="hint" style={{ margin: 0 }}>Ya hay una propuesta por aprobar; se revisa en Reprogramaciones.</p>}
-      <div className="grid-2">
-        <label className="field">
-          <span className="label">Visita programada</span>
-          <select className="input" value={scheduleId} onChange={(e) => setScheduleId(e.target.value)}>
-            {detail.schedules.map((s) => <option key={s.id} value={s.id}>{fmtDate(s.plannedDate)} · {s.brigadeName}</option>)}
-          </select>
-        </label>
-        <label className="field">
-          <span className="label">Nueva fecha</span>
-          <input className="input" type="date" value={newDate} onChange={(e) => setNewDate(e.target.value)} />
-        </label>
-      </div>
-      <input className="input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Sustento de la reprogramación" />
-      <label style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 14 }}>
-        <input type="checkbox" checked={reopen} onChange={(e) => setReopen(e.target.checked)} /> Volver a dejar pendientes las unidades no realizadas de la estación
-      </label>
-      <p className="hint" style={{ margin: 0 }}>
-        {approver
-          ? 'Se guarda la fecha original, la nueva, el motivo y quién aprobó. La brigada lo verá al actualizar su paquete de trabajo.'
-          : 'Queda por aprobar: coordinación la revisa y, al aprobarla, se actualiza el cronograma.'}
-      </p>
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <button className="btn btn-primary" disabled={!newDate || reason.trim().length < 3 || save.isPending} onClick={() => save.mutate()}>{approver ? 'Reprogramar' : 'Enviar propuesta'}</button>
-      </div>
-      <ErrorBox error={save.error} />
-    </div>
+    <RescheduleForm
+      variant="card"
+      visits={detail.schedules}
+      initialScheduleId={initial.id}
+      initialReason={detail.type === 'lluvia_intensa' ? 'Lluvia intensa' : ''}
+      approver={approver}
+      pendingNote={pending && <p className="hint" style={{ margin: 0 }}>Ya hay una propuesta por aprobar; se revisa en Reprogramaciones.</p>}
+      submit={(v) => api<{ reopened: number }>(`/incidents/${detail.id}/reschedule`, {
+        method: 'POST', body: JSON.stringify({ scheduleId: v.scheduleId, newDate: v.newDate, reason: v.reason, reopenUnits: v.reopenUnits }),
+      })}
+      onDone={onDone}
+    />
   );
 }
 

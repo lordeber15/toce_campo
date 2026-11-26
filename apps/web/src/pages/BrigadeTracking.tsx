@@ -51,7 +51,7 @@ export function BrigadeTrackingPage() {
 
       <MetricTiles m={b.metrics} links={staff} />
 
-      <div className="split" style={{ gridTemplateColumns: 'minmax(0, 1.3fr) minmax(320px, 1fr)', marginBottom: 16 }}>
+      <div className="split" style={{ '--split-cols': 'minmax(0, 1.3fr) minmax(320px, 1fr)', marginBottom: 16 } as React.CSSProperties}>
         <div className="card" style={{ padding: 16 }}>
           <div className="section-title">Avance acumulado de la brigada</div>
           <ProgressChart data={curve} today={today} height={220} />
@@ -123,7 +123,7 @@ export function BrigadeTrackingPage() {
         </div>
       </div>
 
-      <div className="split" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))' }}>
+      <div className="split" style={{ '--split-cols': 'repeat(auto-fit, minmax(340px, 1fr))' } as React.CSSProperties}>
         <div className="card">
           <div className="toolbar"><strong>Actividades pendientes</strong><span className="hint">De estaciones con fecha vencida o de hoy</span></div>
           <div className="list">

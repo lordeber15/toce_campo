@@ -46,7 +46,7 @@ check "Flora no recibe unidades de Aves" "$(echo "$FLO" | pk 'p.units.some(u=>u.
 COO=$(curl -s "$B/work-package" -H "authorization: Bearer $(token 10000001)")
 check "coordinador sin brigada: paquete vacío" "$(echo "$COO" | pk 'p.brigades.length+p.schedules.length')" 0
 
-docker exec toce-postgres psql -U toce -d toce -qc "delete from work_package_downloads where device_id = 'smoke-wp'" >/dev/null
+docker exec toce-postgres psql -U toce -d "${DB_NAME:-toce}" -qc "delete from work_package_downloads where device_id = 'smoke-wp'" >/dev/null
 
 echo
 [ $FAILS -eq 0 ] && echo "Todas las pruebas del paquete de trabajo pasaron" || { echo "$FAILS pruebas fallaron"; exit 1; }

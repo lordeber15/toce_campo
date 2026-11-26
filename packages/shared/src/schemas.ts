@@ -26,6 +26,8 @@ export const authUserSchema = z.object({
   specialtyId: z.string().uuid().nullable(),
   specialtyCode: z.string().nullable(),
   isActive: z.boolean(),
+  /** Contraseña inicial (DNI) o restablecida: debe cambiarla al ingresar. Opcional para clientes antiguos. */
+  mustChangePassword: z.boolean().optional(),
 });
 export type AuthUser = z.infer<typeof authUserSchema>;
 
