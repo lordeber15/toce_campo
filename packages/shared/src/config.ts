@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { formSchemaValidator } from './forms.js';
 
 const uuid = z.string().uuid();
 
@@ -75,14 +76,6 @@ export const speciesImportSchema = z.object({
   rows: z.array(speciesSchema.omit({ specialtyId: true, isActive: true })).min(1).max(20000),
 });
 
-const formFieldSchema = z.object({
-  key: z.string().trim().min(1).max(40).regex(/^[a-z0-9_]+$/, 'Clave: minúsculas, números y _'),
-  label: z.string().trim().min(1).max(80),
-  type: z.enum(['text', 'number', 'select', 'date', 'coords', 'textarea', 'species']),
-  required: z.boolean().optional(),
-  options: z.array(z.string().trim().min(1).max(80)).max(200).optional(),
-  auto: z.boolean().optional(),
-});
 
 /** Clase del método (plantilla de carga masiva). EVENTO = abierto: las unidades se crean en campo. */
 export const METHOD_CLASSES = ['todas', 'condicional', 'evento', 'atributo', 'transversal'] as const;
@@ -112,11 +105,7 @@ export const methodUpdateSchema = z.object({
     .optional(),
   methodPhotoRequired: z.boolean().optional(),
   methodPhotoInstructions: z.string().max(1000).nullish(),
-  formSchema: z
-    .object({ fields: z.array(formFieldSchema).max(40) })
-    .refine((f) => new Set(f.fields.map((x) => x.key)).size === f.fields.length, 'Hay campos con la misma clave')
-    .refine((f) => f.fields.every((x) => x.type !== 'select' || (x.options && x.options.length > 0)), 'Las listas necesitan al menos una opción')
-    .optional(),
+  formSchema: formSchemaValidator.optional(),
   isActive: z.boolean().optional(),
 });
 

@@ -166,6 +166,10 @@ const MIGRATIONS: string[] = [
    );`,
 ];
 
+// Repeated evaluations belong to the same physical unit, with distinct client IDs.
+MIGRATIONS.push(`DROP INDEX IF EXISTS executions_unit_idx;
+CREATE INDEX IF NOT EXISTS executions_unit_visits_idx ON executions(user_id,unit_id,started_at);`);
+
 let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 export function getDb(): Promise<SQLite.SQLiteDatabase> {

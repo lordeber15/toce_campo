@@ -1,9 +1,8 @@
 import { Platform } from 'react-native';
-import { ImageFormat, Skia, matchFont, type SkCanvas, type SkFont } from '@shopify/react-native-skia';
+import { ImageFormat, PaintStyle, Skia, matchFont, type SkCanvas, type SkFont } from '@shopify/react-native-skia';
 import { Directory, File, Paths } from 'expo-file-system';
-import { PHOTO_COMPRESSED_MAX, PHOTO_COMPRESSED_QUALITY } from '@toce/shared';
+import { boundedDimensions, compassLabel, fileStem, jpegWithPhotoMetadata, PHOTO_JPEG_QUALITY, wrapPhotoText } from '@toce/shared';
 
-/** Carpeta de un registro de campo en el teléfono (fotos y audios hasta que se suben). */
 export function fieldDir(executionClientId: string): Directory {
   const dir = new Directory(Paths.document, 'campo', executionClientId);
   if (!dir.exists) dir.create({ intermediates: true });
@@ -11,110 +10,110 @@ export function fieldDir(executionClientId: string): Directory {
 }
 
 export type ProcessedPhoto = {
-  originalPath: string;
-  compressedPath: string;
-  width: number;
-  height: number;
-  sizeBytes: number;
-  originalSizeBytes: number;
+  originalPath: string; compressedPath: string; width: number; height: number;
+  sizeBytes: number; originalSizeBytes: number;
 };
 
-/**
- * Guarda la foto tomada:
- * - el original tal cual sale de la cámara (alta resolución, con sus datos EXIF);
- * - una copia comprimida (lado mayor 1600 px) con el sello visible en la parte inferior.
- * `upright` son las medidas que informa la cámara ya orientadas: si la imagen decodificada
- * viene girada, se rota al dibujar.
+/** Dos archivos <=12 MP: sin rótulo y rotulado JPEG100.
+ * compressedPath conserva el nombre del contrato existente; ya NO implica 1600px/JPEG72.
+ * Sin recorte ni ampliación. La cámara entrega la orientación procesada (skipProcessing:false).
  */
 export async function processPhoto(
-  captureUri: string,
-  upright: { width: number; height: number },
-  stamp: string[],
-  executionClientId: string,
-  clientId: string,
+  captureUri: string, upright: { width: number; height: number }, stamp: string[],
+  executionClientId: string, clientId: string,
+  options: { name?: string; bearing?: number | null; metadata?: Record<string, unknown> } = {},
 ): Promise<ProcessedPhoto> {
   const dir = fieldDir(executionClientId);
-  const original = new File(dir, `${clientId}-original.jpg`);
-  await new File(captureUri).move(original);
-
-  const data = await Skia.Data.fromURI(original.uri);
+  const stem = `${fileStem(options.name ?? 'Foto')}_${clientId}`;
+  const original = new File(dir, `${stem}_SIN_ROTULO.jpg`);
+  const labelled = new File(dir, `${stem}.jpg`);
+  const metadata = { ...options.metadata, width: upright.width, height: upright.height, label: stamp, magneticCameraBearing: options.bearing ?? null };
+  const data = await Skia.Data.fromURI(captureUri);
   const img = Skia.Image.MakeImageFromEncoded(data);
   if (!img) throw new Error('No se pudo leer la foto');
-  const iw = img.width();
-  const ih = img.height();
-  const rotate = (upright.width > upright.height) !== (iw > ih) && upright.width !== upright.height;
-  const uw = rotate ? ih : iw;
-  const uh = rotate ? iw : ih;
-
-  const scale = Math.min(1, PHOTO_COMPRESSED_MAX / Math.max(uw, uh));
-  const W = Math.round(uw * scale);
-  const H = Math.round(uh * scale);
-  const surface = Skia.Surface.MakeOffscreen(W, H);
-  if (!surface) throw new Error('No se pudo preparar la foto');
-  const canvas = surface.getCanvas();
-  const paint = Skia.Paint();
-  paint.setAntiAlias(true);
-
-  canvas.save();
-  if (rotate) {
-    // Gira 90° a la derecha: la imagen decodificada estaba acostada.
-    canvas.translate(W, 0);
-    canvas.rotate(90, 0, 0);
-    canvas.drawImageRect(img, Skia.XYWHRect(0, 0, iw, ih), Skia.XYWHRect(0, 0, H, W), paint);
-  } else {
-    canvas.drawImageRect(img, Skia.XYWHRect(0, 0, iw, ih), Skia.XYWHRect(0, 0, W, H), paint);
+  const iw = img.width(), ih = img.height();
+  // Skia aplica la orientación EXIF al decodificar. No adivinar giros de 90/270 grados.
+  const captureRatio = upright.width / upright.height;
+  if (Math.abs(iw / ih - captureRatio) > 0.02) {
+    img.dispose(); data.dispose();
+    throw new Error('La orientación de la foto no coincide con la cámara. Vuelve a tomarla.');
   }
-  canvas.restore();
-
-  drawStamp(canvas, W, H, stamp);
-
-  surface.flush();
-  const snapshot = surface.makeImageSnapshot().makeNonTextureImage();
-  if (!snapshot) throw new Error('No se pudo generar la foto');
-  const bytes = snapshot.encodeToBytes(ImageFormat.JPEG, PHOTO_COMPRESSED_QUALITY);
-  const compressed = new File(dir, `${clientId}.jpg`);
-  await compressed.write(bytes);
-
-  return {
-    originalPath: original.uri,
-    compressedPath: compressed.uri,
-    width: W,
-    height: H,
-    sizeBytes: bytes.length,
-    originalSizeBytes: original.size ?? 0,
-  };
+  const { width: W, height: H } = boundedDimensions(iw, ih);
+  const surface = Skia.Surface.MakeOffscreen(W, H);
+  if (!surface) { img.dispose(); data.dispose(); throw new Error('No hay memoria suficiente para procesar la foto. Intenta de nuevo.'); }
+  try {
+    const canvas = surface.getCanvas(), paint = Skia.Paint();
+    paint.setAntiAlias(true);
+    canvas.drawImageRectCubic(img, Skia.XYWHRect(0, 0, iw, ih), Skia.XYWHRect(0, 0, W, H), 1/3, 1/3, paint);
+    if (W === iw && H === ih) {
+      // Conserva exactamente el JPEG de cámara y sus EXIF cuando ya cumple el límite.
+      new File(captureUri).copy(original);
+    } else {
+      surface.flush();
+      const rawSnapshot = surface.makeImageSnapshot();
+      const unlabelled = rawSnapshot.makeNonTextureImage();
+      if (!unlabelled) { rawSnapshot.dispose(); throw new Error("No se pudo preparar la foto sin rótulo"); }
+      try { original.write(jpegWithPhotoMetadata(unlabelled.encodeToBytes(ImageFormat.JPEG, PHOTO_JPEG_QUALITY), { ...metadata, width: W, height: H })); }
+      finally { unlabelled.dispose(); if (rawSnapshot !== unlabelled) rawSnapshot.dispose(); }
+    }
+    drawStamp(canvas, W, H, stamp, options.bearing);
+    surface.flush();
+    const labelledSnapshot = surface.makeImageSnapshot();
+    const snapshot = labelledSnapshot.makeNonTextureImage();
+    if (!snapshot) { labelledSnapshot.dispose(); throw new Error("No se pudo preparar la foto rotulada"); }
+    try { labelled.write(jpegWithPhotoMetadata(snapshot.encodeToBytes(ImageFormat.JPEG, PHOTO_JPEG_QUALITY), { ...metadata, width: W, height: H })); }
+    finally { snapshot.dispose(); if (labelledSnapshot !== snapshot) labelledSnapshot.dispose(); }
+    if (!labelled.size || !original.size) throw new Error('No se pudo escribir la foto completa');
+    return { originalPath: original.uri, compressedPath: labelled.uri, width: W, height: H,
+      sizeBytes: labelled.size, originalSizeBytes: original.size };
+  } catch (error) {
+    deleteLocalFiles(original.uri, labelled.uri);
+    throw error;
+  } finally {
+    surface.dispose(); img.dispose(); data.dispose();
+    deleteLocalFiles(captureUri);
+  }
 }
 
 const FONT_FAMILY = Platform.select({ ios: 'Helvetica', default: 'sans-serif' });
 
-/** Banda semitransparente con el texto del sello (UTM, fecha, lugar, estación y unidad). */
-function drawStamp(canvas: SkCanvas, W: number, H: number, lines: string[]) {
-  const size = Math.max(14, Math.round(Math.min(W, H) * 0.032));
-  const bold = matchFont({ fontFamily: FONT_FAMILY, fontSize: size * 1.12, fontWeight: 'bold' });
+/** Texto blanco delineado. Fondo completamente transparente, sin banda ni truncamiento. */
+export function drawStamp(canvas: SkCanvas, W: number, H: number, lines: string[], bearing?: number | null) {
+  const scale = Math.min(W, H * 4 / 3) / 1600;
+  const size = Math.max(10, 24 * scale), pad = Math.max(8, 24 * scale);
+  const heading = matchFont({ fontFamily: FONT_FAMILY, fontSize: size * 28/24, fontWeight: 'bold' });
   const font = matchFont({ fontFamily: FONT_FAMILY, fontSize: size, fontWeight: 'normal' });
-  const pad = Math.round(size * 0.7);
-  const lh = Math.round(size * 1.38);
-  const boxH = pad * 2 + lh * lines.length;
-
-  const bg = Skia.Paint();
-  bg.setColor(Skia.Color('rgba(0,0,0,0.55)'));
-  canvas.drawRect(Skia.XYWHRect(0, H - boxH, W, boxH), bg);
-
-  const fg = Skia.Paint();
-  fg.setColor(Skia.Color('white'));
-  fg.setAntiAlias(true);
-  lines.forEach((line, i) => {
-    const f = i === 0 ? bold : font;
-    canvas.drawText(fit(line, f, W - pad * 2), pad, H - boxH + pad + lh * (i + 1) - Math.round(lh * 0.28), fg, f);
+  const compass = bearing != null && Number.isFinite(bearing);
+  const reserve = compass ? 125 * scale : 0;
+  const available = W - pad * 2 - reserve;
+  const rows = lines.flatMap((line, i) => {
+    const f = i === 0 ? heading : font;
+    return wrapPhotoText(line, available, (v) => f.measureText(v).width).map((text) => ({ text, font: f }));
   });
-}
-
-/** Recorta con "…" si la línea no entra en el ancho de la foto. */
-function fit(text: string, font: SkFont, max: number): string {
-  if (font.measureText(text).width <= max) return text;
-  let t = text;
-  while (t.length > 4 && font.measureText(`${t}…`).width > max) t = t.slice(0, -1);
-  return `${t}…`;
+  const lh = size * 1.4;
+  const white = Skia.Paint(); white.setAntiAlias(true); white.setColor(Skia.Color('white'));
+  const outline = Skia.Paint(); outline.setAntiAlias(true); outline.setColor(Skia.Color('black'));
+  outline.setStyle(PaintStyle.Stroke); outline.setStrokeWidth(Math.max(1, 2 * scale));
+  const text = (value: string, x: number, y: number, f: SkFont) => {
+    canvas.drawText(value, x, y, outline, f); canvas.drawText(value, x, y, white, f);
+  };
+  rows.forEach((r, i) => text(r.text, pad, H - pad - (rows.length - 1 - i) * lh, r.font));
+  if (compass) {
+    const cx = W - pad - reserve / 2, cy = H - pad - 65 * scale, radius = 27 * scale;
+    // Norte magnético orientado respecto del azimut de la cámara, no del desplazamiento GPS.
+    const angle = -bearing! * Math.PI / 180;
+    const x = cx + Math.sin(angle) * radius, y = cy - Math.cos(angle) * radius;
+    outline.setStrokeWidth(4 * scale); white.setStrokeWidth(2 * scale);
+    canvas.drawLine(cx, cy, x, y, outline); canvas.drawLine(cx, cy, x, y, white);
+    for (const side of [-1, 1]) {
+      const bx = x - Math.sin(angle) * 10 * scale + side * Math.cos(angle) * 6 * scale;
+      const by = y + Math.cos(angle) * 10 * scale + side * Math.sin(angle) * 6 * scale;
+      canvas.drawLine(x, y, bx, by, outline); canvas.drawLine(x, y, bx, by, white);
+    }
+    text('N', x - size/3, y - size/3, font);
+    const label = compassLabel(bearing!);
+    text(label, cx - font.measureText(label).width / 2, H - pad, font);
+  }
 }
 
 /** Borra los archivos de una foto o audio (al reemplazarla antes de subirla). */

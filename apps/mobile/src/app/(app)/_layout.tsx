@@ -44,8 +44,8 @@ export default function AppLayout() {
 
 /** El registro de campo pide actualizar el paquete cuando coordinación reprograma una visita. */
 function FieldWithPackage({ children }: { children: ReactNode }) {
-  const { download } = useWorkPackage();
-  return <FieldProvider onScheduleChanged={() => void download()}>{children}</FieldProvider>;
+  const { download,pkg } = useWorkPackage();
+  return <FieldProvider packageVersion={pkg?.version} onScheduleChanged={() => void download()}>{children}</FieldProvider>;
 }
 
 /** Si una pantalla falla, se muestra este aviso en lugar de cerrar la app (lo guardado no se pierde). */

@@ -207,6 +207,16 @@ const workPackageRoutes: FastifyPluginAsync = async (app) => {
         : [];
 
       const specialtyIds = [...new Set(stationMethods.map((sm) => sm.specialtyId))];
+      const formHosts = smIds.length ? (await db.execute(sql`
+        SELECT DISTINCT ON (su.id) su.id, e.client_id AS "executionId", su.station_id AS "stationId", su.code,
+          e.form_data->'header' AS header, ST_Y(e.start_geom) AS lat, ST_X(e.start_geom) AS lng
+        FROM sampling_units su JOIN methods m ON m.id=su.method_id JOIN executions e ON e.sampling_unit_id=su.id
+        WHERE su.station_method_id IN (${list(smIds)}) AND m.code='EPV' AND e.form_data ? 'header'
+        ORDER BY su.id,e.client_updated_at DESC`)).rows as NonNullable<WorkPackage['formHosts']> : [];
+      const stationForms = smIds.length ? (await db.execute(sql`
+        SELECT client_id AS "clientId",station_method_id AS "stationMethodId",field_date AS "fieldDate","values",
+          updated_at AS "updatedAt" FROM station_method_forms WHERE station_method_id IN (${list(smIds)}) AND specialist_id=${userId}
+        ORDER BY updated_at,client_id`)).rows as NonNullable<WorkPackage['stationForms']> : [];
       const species: WpSpecies[] = specialtyIds.length
         ? ((await db.execute(sql`
             SELECT s.id, sp.code AS "specialtyCode", s.scientific_name AS "scientificName", s.common_name AS "commonName",
@@ -259,6 +269,8 @@ const workPackageRoutes: FastifyPluginAsync = async (app) => {
         units,
         species,
         layers,
+        formHosts,
+        stationForms,
       };
       const version = createHash('sha256').update(JSON.stringify(body)).digest('hex').slice(0, 16);
       const generatedAt = new Date().toISOString();

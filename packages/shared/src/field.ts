@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { formSchemaValidator } from './forms.js';
 
 /**
  * Registro de campo (Sprint 1.3): ejecución de una unidad de muestreo con sus fotos,
@@ -20,11 +21,16 @@ export const fieldRecordSchema = z.object({
   values: z.record(z.string(), z.unknown()),
   createdAt: isoDateTime,
   updatedAt: isoDateTime.optional(),
+  contextId: z.string().max(100).optional(),
+  group: z.string().max(80).optional(),
 });
 export type FieldRecord = z.infer<typeof fieldRecordSchema>;
 
 export const executionFormDataSchema = z.object({
-  records: z.array(fieldRecordSchema).max(500).default([]),
+  records: z.array(fieldRecordSchema).max(10000).default([]),
+  header: z.record(z.string(), z.unknown()).optional(),
+  contexts: z.record(z.string(), z.record(z.string(), z.unknown())).optional(),
+  schemaSnapshot: formSchemaValidator.optional(),
 });
 export type ExecutionFormData = z.infer<typeof executionFormDataSchema>;
 

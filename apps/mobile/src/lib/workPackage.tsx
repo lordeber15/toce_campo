@@ -76,7 +76,7 @@ export function WorkPackageProvider({ children }: { children: ReactNode }) {
       setError(null);
       try {
         const db = await getDb();
-        const current = await db.getFirstAsync<{ version: string }>('SELECT version FROM work_package WHERE user_id = ?', userId);
+        const current = await db.getFirstAsync<{ version: string; data:string }>('SELECT version,data FROM work_package WHERE user_id = ?', userId);
         const deviceId = await getDeviceId();
         const qs = `deviceId=${encodeURIComponent(deviceId)}${current ? `&version=${current.version}` : ''}`;
         const res = await api<WorkPackage | WorkPackageUnchanged>(`/work-package?${qs}`, {}, 30000);
@@ -84,6 +84,13 @@ export function WorkPackageProvider({ children }: { children: ReactNode }) {
         if ('unchanged' in res) {
           await db.runAsync('UPDATE work_package SET downloaded_at = ? WHERE user_id = ?', now, userId);
         } else {
+          // Pin local offline evaluations before replacing the downloaded catalog.
+          if(current){
+            const previous=JSON.parse(current.data) as WorkPackage;
+            for(const m of previous.methods)await db.runAsync(
+              "UPDATE executions SET form_data=json_set(form_data,'$.schemaSnapshot',json(?)) WHERE user_id=? AND method_id=? AND json_extract(form_data,'$.schemaSnapshot') IS NULL",
+              JSON.stringify(m.formSchema),userId,m.id);
+          }
           await db.runAsync(
             `INSERT INTO work_package (user_id, version, generated_at, downloaded_at, data) VALUES (?, ?, ?, ?, ?)
              ON CONFLICT(user_id) DO UPDATE SET version = excluded.version, generated_at = excluded.generated_at,

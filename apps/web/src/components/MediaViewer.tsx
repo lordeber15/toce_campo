@@ -37,7 +37,7 @@ export function MediaViewer({ title, kind, mimeType, queryKey, load, loadOrigina
       footer={<>
         {loadOriginal && image && (
           <button type="button" className="btn" onClick={() => setOriginal((v) => !v)} disabled={original && orig.isLoading}>
-            {original ? 'Ver versión liviana' : 'Original en alta resolución'}
+            {original ? 'Ver foto con datos' : 'Ver foto sin rótulo'}
           </button>
         )}
         {src && <a className="btn" href={src} target="_blank" rel="noreferrer">Abrir en otra pestaña</a>}

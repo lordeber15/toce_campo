@@ -20,7 +20,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "pe.toce.campo"
+      "package": "pe.toce.campo",
+      "versionCode": 2
     },
     "web": {
       "output": "single",
@@ -73,7 +74,13 @@
         }
       ],
       "./plugins/withCleartextHttp",
-      "@maplibre/maplibre-react-native"
+      "@maplibre/maplibre-react-native",
+      [
+        "expo-sensors",
+        {
+          "motionPermission": "TOCE Campo usa los sensores para registrar el rumbo de la cámara en las fotografías."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

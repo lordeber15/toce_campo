@@ -7,6 +7,7 @@ import { useField } from '../../lib/field';
 import { usePosition } from '../../lib/location';
 import { todayLima, usePackageIndex } from '../../lib/workPackage';
 import { colors, radius } from '../../theme';
+import { ConfiguredForm } from '../../components/ConfiguredForm';
 
 type Values = Record<string, unknown>;
 type Coords = { lat: number; lng: number; accuracy: number | null; utm: string };
@@ -20,7 +21,8 @@ export default function RecordScreen() {
   const execution = field.executions.find((e) => e.clientId === exec);
   const method = execution ? index?.methods.get(execution.methodId) : undefined;
   const existing = record ? execution?.formData.records.find((r) => r.id === record) : undefined;
-  const fields = method?.formSchema.fields ?? [];
+  const schema = execution?.formData.schemaSnapshot ?? method?.formSchema;
+  const fields = schema?.fields ?? [];
 
   const [values, setValues] = useState<Values>(() => {
     const v: Values = { ...(existing?.values ?? {}) };
@@ -33,6 +35,8 @@ export default function RecordScreen() {
     setValues((v) => ({ ...v, [key]: value }));
     setErrors((e) => (e[key] ? { ...e, [key]: '' } : e));
   };
+
+  if (execution && schema?.version === 2) return <ConfiguredForm execution={execution} schema={schema} onBack={()=>router.back()} />;
 
   if (!execution || !method) {
     return (
@@ -67,7 +71,7 @@ export default function RecordScreen() {
     const records = existing
       ? execution.formData.records.map((r) => (r.id === existing.id ? rec : r))
       : [...execution.formData.records, rec];
-    await field.update(execution.clientId, { formData: { records } });
+    await field.update(execution.clientId, { formData: { ...execution.formData, schemaSnapshot:schema, records } });
     router.back();
   };
 
@@ -77,7 +81,7 @@ export default function RecordScreen() {
       {
         text: 'Eliminar', style: 'destructive',
         onPress: async () => {
-          await field.update(execution.clientId, { formData: { records: execution.formData.records.filter((r) => r.id !== existing!.id) } });
+          await field.update(execution.clientId, { formData: { ...execution.formData, schemaSnapshot:schema, records: execution.formData.records.filter((r) => r.id !== existing!.id) } });
           router.back();
         },
       },

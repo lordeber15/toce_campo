@@ -10,6 +10,7 @@ import { useRoleView } from '../../../lib/roles';
 import { usePosition } from '../../../lib/location';
 import { MethodLine, Pill, UNIT_STATUS } from '../../../components/field';
 import { colors, radius } from '../../../theme';
+import { StationForm } from '../../../components/StationForm';
 
 /** Detalle de una estación: mapa, alerta y métodos con sus unidades de muestreo. */
 export default function StationScreen() {
@@ -92,6 +93,7 @@ export default function StationScreen() {
       {methods.map((m) => (
         <View key={m.stationMethod.id} style={s.card}>
           <MethodLine m={m} />
+          {roleView.executes && m.method.formSchema.version===2 && <StationForm method={m.method} stationMethodId={m.stationMethod.id}/>}
           <View style={s.meta}>
             {!!(m.method.scheduleStart && m.method.scheduleEnd) && <Pill>{`${m.method.scheduleStart}–${m.method.scheduleEnd}`}</Pill>}
             {m.method.minDurationMin != null && <Pill>{`mín. ${m.method.minDurationMin} min`}</Pill>}
