@@ -72,12 +72,30 @@ export function MapView({ layers, areas, photos = [], onPhotoClick, tracks = [],
   return (
     <MapContainer center={[-9.19, -75.0]} zoom={5} style={{ height, width: '100%', borderRadius: 10 }} scrollWheelZoom preferCanvas>
       <LayersControl position="topright">
-        <LayersControl.BaseLayer checked name="OpenStreetMap">
+        {/* Satélite por defecto (Esri World Imagery); más allá de z18 se amplía la última imagen disponible. */}
+        <LayersControl.BaseLayer checked name="Satélite">
+          <TileLayer
+            attribution="Imágenes &copy; Esri, Maxar, Earthstar Geographics"
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+            maxNativeZoom={18}
+            maxZoom={20}
+          />
+        </LayersControl.BaseLayer>
+        <LayersControl.BaseLayer name="OpenStreetMap">
           <TileLayer attribution="&copy; OpenStreetMap" url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" maxZoom={19} />
         </LayersControl.BaseLayer>
         <LayersControl.BaseLayer name="Relieve (OpenTopoMap)">
           <TileLayer attribution="&copy; OpenTopoMap, OpenStreetMap" url="https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png" maxZoom={17} />
         </LayersControl.BaseLayer>
+        {/* Nombres de lugares y límites sobre el satélite (se puede apagar). */}
+        <LayersControl.Overlay checked name="Nombres y límites">
+          <TileLayer
+            attribution="&copy; Esri"
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+            maxNativeZoom={18}
+            maxZoom={20}
+          />
+        </LayersControl.Overlay>
       </LayersControl>
       {layers && (
         <GeoJSON

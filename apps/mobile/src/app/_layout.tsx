@@ -21,6 +21,9 @@ function RootNavigator() {
       <Stack.Protected guard={status === 'signedOut'}>
         <Stack.Screen name="login" />
       </Stack.Protected>
+      <Stack.Protected guard={status === 'mustChangePassword'}>
+        <Stack.Screen name="cambiar-clave" />
+      </Stack.Protected>
       <Stack.Protected guard={status === 'unlocked'}>
         <Stack.Screen name="(app)" />
       </Stack.Protected>

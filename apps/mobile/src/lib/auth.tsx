@@ -2,15 +2,17 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import { AppState, Platform } from 'react-native';
 import * as Device from 'expo-device';
 import type { AuthUser } from '@toce/shared';
-import { ApiError, OfflineError, loginRequest, logoutRequest, refreshRequest, setAccessToken, setRefreshHandler } from './api';
+import { ApiError, OfflineError, api, loginRequest, logoutRequest, refreshRequest, setAccessToken, setRefreshHandler } from './api';
 import * as store from './secure';
 
 /**
  * signedOut: sin sesión en el teléfono -> DNI + contraseña (requiere conexión).
+ * mustChangePassword: primer ingreso (contraseña inicial = DNI) o contraseña restablecida:
+ *            debe crear una propia antes de entrar (igual que en la web).
  * unlocked:  dentro de la app. La sesión queda abierta (también sin conexión)
  *            hasta que el usuario la cierre o el servidor la revoque.
  */
-export type AuthStatus = 'loading' | 'signedOut' | 'unlocked';
+export type AuthStatus = 'loading' | 'signedOut' | 'mustChangePassword' | 'unlocked';
 
 type Ctx = {
   status: AuthStatus;
@@ -20,10 +22,13 @@ type Ctx = {
   notice: string | null;
   signIn: (dni: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
+  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   clearNotice: () => void;
 };
 
 const AuthContext = createContext<Ctx | null>(null);
+
+const statusFor = (u: AuthUser): AuthStatus => (u.mustChangePassword ? 'mustChangePassword' : 'unlocked');
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>('loading');
@@ -48,6 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await store.saveSession({ refreshToken: r.refreshToken, user: r.user, savedAt: new Date().toISOString() });
       setAccessToken(r.accessToken);
       setUser(r.user);
+      setStatus(statusFor(r.user));
       setOnline(true);
       return true;
     } catch (e) {
@@ -76,7 +82,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const session = await store.getSession();
       if (!session) return setStatus('signedOut');
       setUser(session.user);
-      setStatus('unlocked');
+      setStatus(statusFor(session.user));
       void refreshInBackground();
     })();
   }, [refreshInBackground]);
@@ -94,17 +100,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const deviceName = [Device.manufacturer, Device.modelName].filter(Boolean).join(' ') || Platform.OS;
     try {
       const r = await loginRequest(dni, password, deviceId, deviceName);
+      // Servidores antiguos no envían la marca: la contraseña inicial de la carga masiva es el DNI.
+      const u: AuthUser = { ...r.user, mustChangePassword: r.user.mustChangePassword === true || password === dni };
       await store.wipeAuth(); // un usuario activo por dispositivo
-      await store.saveSession({ refreshToken: r.refreshToken, user: r.user, savedAt: new Date().toISOString() });
+      await store.saveSession({ refreshToken: r.refreshToken, user: u, savedAt: new Date().toISOString() });
       setAccessToken(r.accessToken);
-      setUser(r.user);
+      setUser(u);
       setOnline(true);
       setNotice(null);
-      setStatus('unlocked');
+      setStatus(statusFor(u));
     } catch (e) {
       if (e instanceof OfflineError) throw new Error('Necesitas conexión a internet para el primer ingreso.');
       throw e;
     }
+  };
+
+  /** Requiere conexión. El servidor cierra las demás sesiones del usuario y mantiene esta. */
+  const changePassword = async (currentPassword: string, newPassword: string) => {
+    try {
+      await api('/auth/change-password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) });
+    } catch (e) {
+      if (e instanceof OfflineError) throw new Error('Necesitas conexión a internet para cambiar tu contraseña.');
+      throw e;
+    }
+    const session = await store.getSession();
+    if (session) {
+      const u = { ...session.user, mustChangePassword: false };
+      await store.saveSession({ ...session, user: u });
+      setUser(u);
+    }
+    setStatus('unlocked');
   };
 
   const signOut = async () => {
@@ -117,7 +142,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ status, user, online, notice, signIn, signOut, clearNotice: () => setNotice(null) }}>
+    <AuthContext.Provider value={{ status, user, online, notice, signIn, signOut, changePassword, clearNotice: () => setNotice(null) }}>
       {children}
     </AuthContext.Provider>
   );
