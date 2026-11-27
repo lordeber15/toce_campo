@@ -12,7 +12,8 @@
     "db:migrate": "tsx src/db/migrate.ts",
     "db:seed": "tsx src/db/seed.ts",
     "db:studio": "drizzle-kit studio",
-    "test:import": "tsx test/templateImport.test.ts"
+    "test:import": "tsx test/templateImport.test.ts",
+    "test:forms": "tsx test/formImport.test.ts && tsx test/formImport.routes.test.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.0.0",

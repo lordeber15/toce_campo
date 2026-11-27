@@ -134,6 +134,8 @@ export type RecordDetail = RecordRow & {
   formSchema: FormSchema;
   photoSlots: PhotoSlot[];
   formRecords: FieldRecord[];
+  formHeader?: Record<string, unknown>;
+  formContexts?: Record<string, Record<string, unknown>>;
   attachments: RecordAttachment[];
   incidentList: { id: string; type: string; status: string; description: string; occurredAt: string }[];
 };

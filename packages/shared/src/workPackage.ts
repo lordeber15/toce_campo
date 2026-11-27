@@ -157,6 +157,8 @@ export type WpSpecies = {
 };
 
 export type WorkPackage = {
+  formHosts?: { id:string; executionId:string; stationId:string; code:string; header:Record<string,unknown>; lat:number|null; lng:number|null }[];
+  stationForms?: { clientId:string; stationMethodId:string; fieldDate:string; values:Record<string,unknown>; updatedAt:string }[];
   version: string;
   generatedAt: string;
   today: string; // AAAA-MM-DD en America/Lima

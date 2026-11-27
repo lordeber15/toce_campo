@@ -17,3 +17,6 @@ export * from './reschedules.js';
 export * from './documents.js';
 export * from './mine.js';
 export * from './templateImport.js';
+export * from './forms.js';
+
+export * from './photos.js';

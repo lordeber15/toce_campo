@@ -9,6 +9,9 @@ import { File } from 'expo-file-system';
 import { useField } from '../../lib/field';
 import { formatDistance, usePosition } from '../../lib/location';
 import { processPhoto } from '../../lib/photo';
+import { PHOTO_POLICY_KEY, photoUnitCode, selectPictureSize } from '@toce/shared';
+import { usePhotoCompass } from '../../lib/photoCompass';
+import * as SecureStore from '../../lib/secureStore';
 import { usePackageIndex } from '../../lib/workPackage';
 import { colors } from '../../theme';
 
@@ -21,7 +24,12 @@ export default function CameraScreen() {
   const cam = useRef<CameraView>(null);
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
+  const [pictureSize, setPictureSize] = useState<string>();
+  const [sizeConfigured, setSizeConfigured] = useState(false);
   const pos = usePosition();
+  const latestPosition = useRef(pos);
+  useEffect(() => { latestPosition.current = pos; }, [pos]);
+  const getBearing = usePhotoCompass(!!perm?.granted && pos.status === 'ok');
   const field = useField();
   const index = usePackageIndex();
   const insets = useSafeAreaInsets();
@@ -35,9 +43,7 @@ export default function CameraScreen() {
   const inquiryStation = inquiry?.stationCode && index ? [...index.stations.values()].find((x) => x.code === inquiry.stationCode) : undefined;
   const stationId = execution?.stationId ?? incident?.stationId ?? logData?.stationId ?? inquiryStation?.id ?? null;
   const station = stationId ? index?.stations.get(stationId) : undefined;
-  const brigadeProject = logRecord ? index?.brigades.get(logRecord.brigadeId)?.projectId : undefined;
-  const projectId = station?.projectId ?? incident?.projectId ?? brigadeProject;
-  const project = projectId ? index?.projects.get(projectId) : undefined;
+  const method = execution ? index?.methods.get(execution.methodId) : undefined;
   const ownerLabel = execution?.unitCode
     ?? (incident ? `Alerta · ${incident.unitCode ?? station?.code ?? INCIDENT_TYPE_LABELS[incident.type]}` : '');
   const logLabel = logRecord
@@ -53,6 +59,16 @@ export default function CameraScreen() {
   useEffect(() => {
     if (perm && !perm.granted && perm.canAskAgain) void requestPerm();
   }, [perm?.granted, perm?.canAskAgain]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    void cam.current?.getAvailablePictureSizesAsync().then((sizes) => {
+      if (!cancelled) { setPictureSize(selectPictureSize(sizes)); setSizeConfigured(true); }
+    }).catch(() => { if (!cancelled) setSizeConfigured(true); });
+    // Si el dispositivo no enumera tamaños, processPhoto limita el archivo final a 12 MP.
+    return () => { cancelled = true; };
+  }, [ready]);
 
   if (!perm) return <View style={s.black} />;
   if (!perm.granted) {
@@ -71,18 +87,41 @@ export default function CameraScreen() {
   const area: AreaCheck = checksArea ? checkBrigadeArea(brigade, p) : { status: 'sin_area' };
 
   const shoot = async () => {
-    if (!cam.current || busy || (!execution && !incident && !logRecord && !inquiry)) return;
+    if (!cam.current || !sizeConfigured || busy || (!execution && !incident && !logRecord && !inquiry)) return;
     setBusy(true);
     try {
+      if (!(await confirmPhotoPolicy())) { setBusy(false); return; }
       const takenAt = new Date();
+      const bearing = getBearing();
+      const currentPosition = latestPosition.current.status === 'ok' ? latestPosition.current.position : null;
+      const gps = currentPosition && takenAt.getTime() - currentPosition.at <= 30000 ? currentPosition : null;
+      const unit = execution && station && method ? photoUnitCode(station.code, method.code, execution.unitCode) : title;
+      const subject = execution
+        ? kind === 'foto_metodo' ? `Método: ${method?.name ?? 'Sin nombre de método'}` : unit
+        : `${title} · ${label}`;
+      const coords = gps ? latLngToUtm(gps.lat, gps.lng) : null;
+      const when = takenAt.toLocaleString('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+      const stamp = [
+        `${subject}${station?.vegetationUnit ? ` | UV: ${station.vegetationUnit}` : execution ? ' | UV: sin dato' : ''}`,
+        `${coords ? `WGS84 · UTM ${coords.zone}${coords.hemisphere} · E ${coords.easting} · N ${coords.northing}` : 'Sin GPS'}${gps?.altitude != null ? ` | ${Math.round(gps.altitude)} m` : ''} | ${when}`,
+      ];
+      const name = execution
+        ? kind === 'foto_metodo' ? `${station?.code ?? ''}_${method?.name ?? 'Metodo'}_METODO` : `${unit}_UNIDAD`
+        : `${title}_${label}`;
       const pic = await cam.current.takePictureAsync({
-        quality: 0.92,
-        exif: false,
+        quality: 1,
+        exif: true,
+        skipProcessing: false,
         shutterSound: true,
-        additionalExif: p ? { GPSLatitude: Math.abs(p.lat), GPSLatitudeRef: p.lat < 0 ? 'S' : 'N', GPSLongitude: Math.abs(p.lng), GPSLongitudeRef: p.lng < 0 ? 'W' : 'E' } : undefined,
+        additionalExif: {
+          ImageDescription: stamp.join(' | '),
+          UserComment: JSON.stringify({ policy: 'TOCE_PHOTO_12MP_V1', takenAt: takenAt.toISOString(), altitudeReference: 'WGS84_ellipsoid', altitude: gps?.altitude ?? null, magneticCameraBearing: bearing }),
+          ...(gps ? { GPSLatitude: gps.lat, GPSLongitude: gps.lng } : {}),
+          ...(bearing != null ? { GPSImgDirection: bearing, GPSImgDirectionRef: 'M' } : {}),
+        },
       });
       // Fuera del polígono de la brigada (o sin GPS para verificarlo): se advierte antes de guardar.
-      const at = checksArea ? checkBrigadeArea(brigade, p) : { status: 'sin_area' as const };
+      const at = checksArea ? checkBrigadeArea(brigade, gps) : { status: 'sin_area' as const };
       if (at.status === 'fuera' || at.status === 'sin_gps') {
         const keep = await confirmOutside(at);
         if (!keep) {
@@ -92,17 +131,9 @@ export default function CameraScreen() {
         }
       }
       const clientId = Crypto.randomUUID();
-      const when = takenAt.toLocaleString('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
-      const where = [project?.name, station?.name ?? station?.code, station?.vegetationUnit].filter(Boolean).join(' · ');
-      const stamp = [
-        `${title} · ${label}`,
-        p ? `UTM ${formatUtm(latLngToUtm(p.lat, p.lng))}${p.accuracy != null ? ` · ±${Math.round(p.accuracy)} m` : ''}` : `${station ? `Estación ${station.code}` : 'Sin estación'} · sin GPS`,
-        `${when}${p?.altitude != null ? ` · Alt. ${Math.round(p.altitude).toLocaleString('es-PE')} m` : ''}`,
-        where || station?.code || '',
-      ].filter(Boolean);
       // Consulta: la foto se envía como una respuesta propia (se guarda y sube aunque no haya señal).
       const ownerId = inquiry ? Crypto.randomUUID() : exec;
-      const photo = await processPhoto(pic.uri, { width: pic.width, height: pic.height }, stamp, ownerId, clientId);
+      const photo = await processPhoto(pic.uri, { width: pic.width, height: pic.height }, stamp, ownerId, clientId, { name, bearing, metadata: { policy: 'TOCE_PHOTO_12MP_V1', takenAt: takenAt.toISOString(), stationCode: station?.code ?? null, unitCode: execution?.unitCode ?? null, methodName: method?.name ?? null, vegetationUnit: station?.vegetationUnit ?? null, latitude: gps?.lat ?? null, longitude: gps?.lng ?? null, altitude: gps?.altitude ?? null, altitudeReference: 'WGS84_ellipsoid', bearingReference: 'magnetic_north' } });
       if (inquiry) await field.sendInquiryReply(inquiry.id, 'Foto', ownerId);
       await field.addAttachment(
         {
@@ -110,7 +141,7 @@ export default function CameraScreen() {
           slotKey: slot ?? (kind === 'foto_metodo' ? 'metodo' : null),
           mimeType: 'image/jpeg', path: photo.compressedPath, originalPath: photo.originalPath,
           sizeBytes: photo.sizeBytes, originalSizeBytes: photo.originalSizeBytes, width: photo.width, height: photo.height,
-          durationSec: null, lat: p?.lat ?? null, lng: p?.lng ?? null, accuracy: p?.accuracy ?? null, altitude: p?.altitude ?? null,
+          durationSec: null, lat: gps?.lat ?? null, lng: gps?.lng ?? null, accuracy: gps?.accuracy ?? null, altitude: gps?.altitude ?? null,
           takenAt: takenAt.toISOString(),
         },
         // Las fotos de un lado (norte, sur…) reemplazan a la anterior; las adicionales se suman.
@@ -126,7 +157,7 @@ export default function CameraScreen() {
   return (
     <View style={s.black}>
       <Stack.Screen options={{ headerShown: false }} />
-      <CameraView ref={cam} style={StyleSheet.absoluteFill} facing="back" onCameraReady={() => setReady(true)} />
+      <CameraView ref={cam} style={StyleSheet.absoluteFill} facing="back" pictureSize={pictureSize} responsiveOrientationWhenOrientationLocked onCameraReady={() => setReady(true)} />
 
       <View style={[s.top, { paddingTop: insets.top + 8 }]}>
         <Pressable onPress={() => router.back()} hitSlop={12} accessibilityRole="button" accessibilityLabel="Cancelar">
@@ -150,7 +181,7 @@ export default function CameraScreen() {
         </Text>
         <Pressable
           onPress={() => void shoot()}
-          disabled={busy || !ready}
+          disabled={busy || !ready || !sizeConfigured}
           accessibilityRole="button"
           accessibilityLabel="Tomar foto"
           style={({ pressed }) => [s.shutter, (pressed || busy) && { opacity: 0.6 }]}
@@ -161,6 +192,19 @@ export default function CameraScreen() {
       </View>
     </View>
   );
+}
+
+/** Consentimiento de configuración, una vez por instalación. No cambia la cámara del sistema. */
+async function confirmPhotoPolicy(): Promise<boolean> {
+  if (await SecureStore.getItemAsync(PHOTO_POLICY_KEY) === 'accepted') return true;
+  const accepted = await new Promise<boolean>((resolve) => Alert.alert(
+    'Fotografías de campo: hasta 12 MP',
+    'Se guardarán una foto sin rótulo y otra con los datos, en JPEG al 100 %. Ocuparán más espacio y tardarán más en sincronizar. Esta configuración solo se aplica dentro de TOCE Campo.',
+    [{ text: 'Cancelar', style: 'cancel', onPress: () => resolve(false) }, { text: 'Activar', onPress: () => resolve(true) }],
+    { cancelable: true, onDismiss: () => resolve(false) },
+  ));
+  if (accepted) await SecureStore.setItemAsync(PHOTO_POLICY_KEY, 'accepted');
+  return accepted;
 }
 
 const dist = (m: number) => (m < 10 ? 'menos de 10 m' : formatDistance(m));

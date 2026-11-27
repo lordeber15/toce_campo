@@ -4,7 +4,7 @@ import * as Crypto from 'expo-crypto';
 import { File, UploadType } from 'expo-file-system';
 import type {
   AttachmentMetaResult, BrigadeIncidentDto, CoordinationChannel, ExecutionFormData, ExecutionStatus, ExecutionSync, ExecutionSyncResult, IncidentMoment,
-  IncidentOrigin, IncidentSync, IncidentType, LogisticsData, LogisticsEntity, LogisticsRecordDto, MyIncidentDto, MyInquiryDto, WpUnit,
+  IncidentOrigin, IncidentSync, IncidentType, LogisticsData, LogisticsEntity, LogisticsRecordDto, MyIncidentDto, MyInquiryDto, WpUnit, WorkPackage,
 } from '@toce/shared';
 import { ApiError, OfflineError, api, getAccessToken, hasAccessToken, refreshAccessToken } from './api';
 import { useAuth } from './auth';
@@ -13,6 +13,7 @@ import { getDb } from './db';
 import { deleteLocalFiles } from './photo';
 import { getDeviceId } from './secure';
 import { pushTracks, syncLocationUpdates } from './gpsTracking';
+import { syncStationForms, pendingStationForms } from './stationForms';
 
 /**
  * Registro de campo en el teléfono: ejecuciones de unidades, alertas, fotos, notas de voz y
@@ -298,7 +299,7 @@ const MY_FILES = `(
 const SYNC_INTERVAL_MS = 60 * 1000;
 
 /** onScheduleChanged: coordinación reprogramó algo y hay que actualizar el paquete de trabajo. */
-export function FieldProvider({ children, onScheduleChanged }: { children: ReactNode; onScheduleChanged?: () => void }) {
+export function FieldProvider({ children, onScheduleChanged, packageVersion }: { children: ReactNode; onScheduleChanged?: () => void; packageVersion?:string }) {
   const { user, status, online } = useAuth();
   const roles = user?.roles;
   const pulls = useMemo(() => ({
@@ -416,7 +417,7 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
                    + CASE WHEN a.original_path IS NOT NULL AND a.original_uploaded = 0 THEN COALESCE(a.original_size_bytes, 0) ELSE 0 END)
             FROM attachments a WHERE ${files}) AS bytes`,
       userId, userId, userId, userId, userId, userId, userId, userId, userId, userId, userId, userId, userId);
-    setPending({ executions: p?.ex ?? 0, files: p?.files ?? 0, bytes: p?.bytes ?? 0 });
+    setPending({ executions: (p?.ex ?? 0)+await pendingStationForms(userId), files: p?.files ?? 0, bytes: p?.bytes ?? 0 });
     setRev((v) => v + 1);
   }, [userId]);
 
@@ -435,9 +436,11 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
     inFlight.current ??= (async () => {
       setSyncing(true);
       try {
+        let stationError:unknown;
+        try{await syncStationForms(userId);}catch(e){stationError=e;}
         const report = await pushAll(userId, reload, pulls);
         setLastSyncAt(report.at);
-        setLastSyncError(null);
+        setLastSyncError(stationError instanceof OfflineError?null:stationError instanceof Error?stationError.message:stationError?'Error al sincronizar formularios de estación':null);
         if (report.records || report.files || report.responses) setLastReport(report);
         // Coordinación reprogramó algo: el cronograma cambió, se actualiza el paquete de trabajo.
         if (report.rescheduled) scheduleChanged.current?.();
@@ -451,6 +454,8 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
     })();
     return inFlight.current;
   }, [userId, reload, pulls]);
+  // Refresh from SQLite after work-package migration pins existing form definitions.
+  useEffect(()=>{void Promise.resolve().then(reload);},[packageVersion,reload]);
 
   /** Programa una subida poco después de un cambio (agrupa varios cambios seguidos). */
   const scheduleSync = useCallback(() => {
@@ -475,12 +480,14 @@ export function FieldProvider({ children, onScheduleChanged }: { children: React
     const db = await getDb();
     const now = new Date().toISOString();
     const clientId = Crypto.randomUUID();
+      const savedPackage = await db.getFirstAsync<{data: string}>('SELECT data FROM work_package WHERE user_id = ?', userId);
+      const formSchema = savedPackage ? (JSON.parse(savedPackage.data) as WorkPackage).methods.find((m) => m.id === p.methodId)?.formSchema : undefined;
     await db.runAsync(
       `INSERT INTO executions (client_id, user_id, unit_id, new_unit_client_id, station_method_id, station_id, method_id, schedule_id,
-         brigade_id, unit_code, status, started_at, start_lat, start_lng, start_accuracy, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'en_curso', ?, ?, ?, ?, ?)`,
+           brigade_id, unit_code, status, started_at, start_lat, start_lng, start_accuracy, updated_at, form_data)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'en_curso', ?, ?, ?, ?, ?, ?)`,
       clientId, userId, p.unitId, p.newUnitClientId ?? null, p.stationMethodId, p.stationId, p.methodId, p.scheduleId, p.brigadeId,
-      p.unitCode, now, p.position?.lat ?? null, p.position?.lng ?? null, p.position?.accuracy ?? null, now);
+      p.unitCode, now, p.position?.lat ?? null, p.position?.lng ?? null, p.position?.accuracy ?? null, now, JSON.stringify({records:[],schemaSnapshot:formSchema}));
     await reload();
     scheduleSync();
     const row = await db.getFirstAsync<ExecRow>('SELECT * FROM executions WHERE client_id = ?', clientId);

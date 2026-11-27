@@ -14,7 +14,7 @@ import { colors, radius } from '../../../theme';
 
 /** Unidad de muestreo: iniciar, fotos por orientación, foto del método, registros, notas de voz y cierre. */
 export default function UnitScreen() {
-  const { id, date } = useLocalSearchParams<{ id: string; date?: string }>();
+  const { id, date, exec } = useLocalSearchParams<{ id: string; date?: string; exec?:string }>();
   const index = usePackageIndex();
   const field = useField();
   const pos = usePosition();
@@ -22,7 +22,7 @@ export default function UnitScreen() {
   const roleView = useRoleView();
 
   const unit = index?.units.get(id);
-  const execution = field.byUnit.get(id);
+  const execution = exec ? field.executions.find((e)=>e.clientId===exec&&(e.unitId===id||e.newUnitClientId===id)) : field.byUnit.get(id);
   const method = unit ? index?.methods.get(unit.methodId) : undefined;
   const station = unit ? index?.stations.get(unit.stationId) : undefined;
 
@@ -65,11 +65,12 @@ export default function UnitScreen() {
     try {
       const schedules = index.pkg.schedules.filter((sc) => sc.stationId === station.id);
       const schedule = schedules.find((sc) => sc.plannedDate === (date ?? todayLima())) ?? schedules[0];
-      await field.start({
+      const created = await field.start({
         unitId: unit.id, stationMethodId: unit.stationMethodId, stationId: station.id, methodId: method.id,
         scheduleId: schedule?.id ?? null, brigadeId: schedule?.brigadeId ?? null, unitCode: unit.code,
         position: p ? { lat: p.lat, lng: p.lng, accuracy: p.accuracy } : null,
       });
+      router.replace({pathname:'/unidad/[id]',params:{id,exec:created.clientId,...(date?{date}:{})}});
     } finally {
       setStarting(false);
     }
@@ -161,6 +162,11 @@ export default function UnitScreen() {
 
       {execution && (
         <>
+            <View style={s.card}>
+              <Text style={s.h2}>Evaluaciones de esta unidad</Text>
+              {field.executions.filter((e)=>e.unitId===id||e.newUnitClientId===id).map((e)=><Pressable key={e.clientId} onPress={()=>router.replace({pathname:'/unidad/[id]',params:{id,exec:e.clientId}})}><Text>{e.formData.header?.field_date ? String(e.formData.header.field_date) : hhmm(e.startedAt)} · {e.status}{e.clientId===execution.clientId?' · seleccionada':''}</Text></Pressable>)}
+              {closed && roleView.executes && <Pressable style={s.secondary} disabled={starting} onPress={()=>Alert.alert('Nueva evaluación','Se conservarán los datos de las evaluaciones anteriores.',[{text:'Cancelar'},{text:'Iniciar nueva evaluación',onPress:()=>void start()}])}><Text style={s.secondaryText}>Nueva evaluación en la misma unidad</Text></Pressable>}
+            </View>
           <View style={s.card}>
               <Text style={s.h2}>Registro fotográfico</Text>
               {method.photoSlots.length > 0 && (
@@ -234,7 +240,7 @@ export default function UnitScreen() {
               <Text style={[s.h2, { flex: 1 }]}>Registros</Text>
               <Text style={s.small}>{execution.formData.records.length}</Text>
             </View>
-            {execution.formData.records.map((r, i) => (
+            {(execution.formData.schemaSnapshot??method.formSchema).version!==2 && execution.formData.records.map((r, i) => (
               <Pressable
                 key={r.id}
                 onPress={() => router.push({ pathname: '/registro', params: { exec: execution.clientId, record: r.id } })}
@@ -246,13 +252,13 @@ export default function UnitScreen() {
                 <Text style={s.chev}>›</Text>
               </Pressable>
             ))}
-            {!closed && (
+            {(!closed || (execution.formData.schemaSnapshot??method.formSchema).version===2) && (
               <Pressable
                 onPress={() => router.push({ pathname: '/registro', params: { exec: execution.clientId } })}
                 style={({ pressed }) => [s.secondary, pressed && s.pressed]}
                 accessibilityRole="button"
               >
-                <Text style={s.secondaryText}>{execution.formData.records.length ? 'Agregar otro registro' : 'Llenar formulario'}</Text>
+                <Text style={s.secondaryText}>{(execution.formData.schemaSnapshot??method.formSchema).version===2 ? 'Abrir ficha de evaluación' : execution.formData.records.length ? 'Agregar otro registro' : 'Llenar formulario'}</Text>
               </Pressable>
             )}
           </View>

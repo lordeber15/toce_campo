@@ -17,13 +17,6 @@ export const SPECIALTY_LABELS: Readonly<Record<string, string>> = {
 
 export type PhotoSlot = { key: string; label: string; required: boolean };
 
-export type FormFieldType = 'text' | 'number' | 'select' | 'date' | 'coords' | 'textarea' | 'species';
-export type FormField = {
-  key: string;
-  label: string;
-  type: FormFieldType;
-  required?: boolean;
-  options?: string[];
-  auto?: boolean; // se completa automáticamente (fecha, coordenadas)
-};
-export type FormSchema = { fields: FormField[] };
+export type FormField = import('zod').z.infer<typeof import('./forms.js').formFieldSchema>;
+export type FormFieldType = FormField['type'];
+export type FormSchema = import('zod').z.infer<typeof import('./forms.js').formSchemaValidator>;

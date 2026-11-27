@@ -287,6 +287,8 @@ export function RecordDetailPage({ mine = false }: { mine?: boolean }) {
 
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="section-title" style={{ margin: 0, padding: '14px 18px' }}>Registros del formulario ({d.formRecords.length})</div>
+          {d.formHeader && Object.keys(d.formHeader).length > 0 && <div style={{padding:18}}><strong>Datos de la evaluación</strong><dl>{Object.entries(d.formHeader).map(([key,value])=>{const f=fields.find((x)=>x.key===key)??{key,label:key,type:'text' as const};return <div key={key}><dt>{f.label}</dt><dd>{fieldValue(f,value)}</dd></div>;})}</dl></div>}
+          {d.formContexts && Object.keys(d.formContexts).length > 0 && <details style={{padding:18}}><summary>Lecturas, secciones y subdivisiones</summary>{Object.entries(d.formContexts).map(([key,values])=><div key={key}><strong>{key}</strong><dl>{Object.entries(values).map(([k,v])=>{const f=fields.find((x)=>x.key===k)??{key:k,label:k,type:'text' as const};return <div key={k}><dt>{f.label}</dt><dd>{fieldValue(f,v)}</dd></div>;})}</dl></div>)}</details>}
         {d.formRecords.length === 0 ? (
           <div className="empty" style={{ padding: 20 }}>Sin registros en el formulario.</div>
         ) : (
@@ -297,7 +299,7 @@ export function RecordDetailPage({ mine = false }: { mine?: boolean }) {
                 {d.formRecords.map((rec, i) => (
                   <tr key={rec.id}>
                     <td className="hint">{i + 1}</td>
-                    {fields.map((f) => <td key={f.key} className={f.type === 'textarea' ? 'wrap' : undefined}>{fieldValue(f, rec.values[f.key])}</td>)}
+                    {fields.map((f) => <td key={f.key} className={f.type === 'textarea' ? 'wrap' : undefined}>{fieldValue(f, ({...d.formHeader,...d.formContexts?.[rec.contextId ?? 'unidad'],...rec.values})[f.key])}</td>)}
                   </tr>
                 ))}
               </tbody>
@@ -354,6 +356,8 @@ function fieldValue(f: FormField, v: unknown) {
   }
   if (f.type === 'date' && typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) return v.length > 10 ? when(v) : d8(v);
   if (f.type === 'species') return <em>{String(v)}</em>;
+  if (Array.isArray(v)) return v.map((x)=>f.optionLabels?.[String(x)]??String(x)).join(', ');
+  if (f.type === 'select') return f.optionLabels?.[String(v)] ?? String(v);
   if (typeof v === 'object') return JSON.stringify(v);
   return String(v);
 }

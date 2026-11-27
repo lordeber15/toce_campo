@@ -4,7 +4,18 @@ import {
 import { sql } from 'drizzle-orm';
 import { id, createdAt, updatedAt, pointGeom } from './_common.js';
 import { users } from './core.js';
-import { brigades, methods, projects, samplingUnits, schedules, stations } from './project.js';
+import { brigades, methods, projects, samplingUnits, schedules, stations, stationMethods } from './project.js';
+
+/** Station/method result: no fictitious sampling unit for absence of hosts. */
+export const stationMethodForms = pgTable('station_method_forms', {
+  clientId: uuid('client_id').primaryKey(),
+  stationMethodId: uuid('station_method_id').notNull().references(()=>stationMethods.id,{onDelete:'cascade'}),
+  specialistId: uuid('specialist_id').notNull().references(()=>users.id),
+  fieldDate: text('field_date').notNull(),
+  values: jsonb('values').notNull(),
+  schemaSnapshot: jsonb('schema_snapshot').notNull(),
+  updatedAt: timestamp('updated_at',{withTimezone:true}).notNull(),
+},(t)=>[index('station_method_forms_method_idx').on(t.stationMethodId)]);
 
 export const executionStatusEnum = pgEnum('execution_status', ['en_curso', 'fotos_ok', 'completada', 'no_realizada']);
 

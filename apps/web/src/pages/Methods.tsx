@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ADMIN_ROLES, METHOD_CLASSES, type FormField, type FormFieldType, type MethodClass, type PhotoSlot } from '@toce/shared';
+import { ADMIN_ROLES, METHOD_CLASSES, type FormSchema, type FormField, type FormFieldType, type MethodClass, type PhotoSlot } from '@toce/shared';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { Dialog, ErrorBox } from '../components/Dialog';
@@ -10,7 +11,7 @@ type Method = {
   id: string; specialtyId: string; code: string; name: string; description: string | null; instructions: string | null;
   isOpenEnded: boolean; defaultUnitsRequired: number; scheduleStart: string | null; scheduleEnd: string | null; minDurationMin: number | null;
   requirements: string[]; photoSlots: PhotoSlot[]; methodPhotoRequired: boolean; methodPhotoInstructions: string | null;
-  formSchema: { fields: FormField[] }; isActive: boolean; stationCount: number;
+  formSchema: FormSchema; isActive: boolean; stationCount: number;
   methodClass: MethodClass | null; requiresTrack: boolean; photosPerUnit: number | null; scheduleText: string | null; guideline: string | null;
 };
 
@@ -21,6 +22,7 @@ const CLASS_LABELS: Record<MethodClass, string> = {
 
 const TYPES: Record<FormFieldType, string> = {
   text: 'Texto', number: 'Número', select: 'Lista', date: 'Fecha', coords: 'Coordenadas', textarea: 'Texto largo', species: 'Especie (catálogo)',
+  multiselect: 'Selección múltiple', species_list: 'Lista de especies', relation: 'Referencia compartida', time: 'Hora',
 };
 const slug = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 40) || 'campo';
 
@@ -44,6 +46,7 @@ export function MethodsPage() {
       <div className="page-head">
         <div><h1>Métodos y formularios</h1><p>Lo que ve cada especialista en campo: unidades, fotos requeridas y campos del formulario reducido.</p></div>
         {isAdmin && spec && <button className="btn btn-primary" onClick={() => setCreating(true)}>Nuevo método</button>}
+        {isAdmin && <Link className="btn" to="/carga-formularios">Cargar formularios desde Excel</Link>}
       </div>
       <SpecialtyBar
         specialties={specialties.data ?? []}
@@ -177,6 +180,8 @@ function MethodEditor({ method, readOnly }: { method: Method; readOnly: boolean 
       <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}><input type="checkbox" checked={m.methodPhotoRequired} onChange={(e) => upd({ methodPhotoRequired: e.target.checked })} /> Exigir foto del método (especialista aplicando el método)</label>
       {m.methodPhotoRequired && <textarea className="input" aria-label="Instrucciones de la foto del método" value={m.methodPhotoInstructions ?? ''} onChange={(e) => upd({ methodPhotoInstructions: e.target.value })} />}
 
+      {m.formSchema.version === 2 && <p>Formulario importado con condiciones y niveles. Para modificarlo, utiliza <Link to="/carga-formularios">la carga de formularios</Link>.</p>}
+      <fieldset disabled={readOnly || m.formSchema.version === 2} style={{ border: 0, padding: 0 }}>
       <div style={{ display: 'flex', alignItems: 'center' }}>
         <div className="section-title" style={{ flex: 1 }}>Formulario reducido ({fields.length} campos)</div>
         {!readOnly && <button type="button" className="btn btn-sm" onClick={addField}>+ Campo</button>}
@@ -208,6 +213,7 @@ function MethodEditor({ method, readOnly }: { method: Method; readOnly: boolean 
         ))}
       </div>
       <p className="hint">Los registros ya guardados conservan sus datos aunque quites un campo.</p>
+      </fieldset>
     </fieldset>
   );
 }

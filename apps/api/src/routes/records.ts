@@ -64,7 +64,8 @@ export async function recordDetail(id: string): Promise<RecordDetail> {
       json_build_object('lat', ST_Y(s.geom), 'lng', ST_X(s.geom), 'vegetationUnit', s.vegetation_unit,
         'influenceArea', s.influence_area, 'utmZone', p.utm_zone) AS station,
       CASE WHEN e.start_geom IS NULL THEN NULL ELSE round(ST_Distance(e.start_geom::geography, s.geom::geography))::int END AS "distanceToStationM",
-      u.dni AS "specialistDni", m.form_schema AS "formSchema", m.photo_slots AS "photoSlots",
+      u.dni AS "specialistDni", COALESCE(e.form_data->'schemaSnapshot', m.form_schema) AS "formSchema", m.photo_slots AS "photoSlots",
+      COALESCE(e.form_data->'header', '{}'::jsonb) AS "formHeader", COALESCE(e.form_data->'contexts', '{}'::jsonb) AS "formContexts",
       COALESCE(e.form_data->'records', '[]'::jsonb) AS "formRecords",
       CASE WHEN b.area_geom IS NULL THEN NULL ELSE json_build_object('name', b.area_name,
         'geometry', ST_AsGeoJSON(ST_SimplifyPreserveTopology(b.area_geom, 0.00002), 6)::json) END AS "brigadeArea"

@@ -1,3 +1,4 @@
+import { photoDownloadName } from '@toce/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { ZodTypeProvider } from '@fastify/type-provider-zod';
 import type { Readable } from 'node:stream';
@@ -5,7 +6,7 @@ import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   LOGISTICS_ENTITIES, WEB_ROLES, attachmentMetaSchema, executionSyncSchema, hasAnyRole, unitCode,
-  type AttachmentMetaResult, type ExecutionSyncResult,
+  type AttachmentMetaResult, type ExecutionSyncResult, type ExecutionFormData, type FormSchema, validateFormValues, canonicalFormJson,
 } from '@toce/shared';
 import { db } from '../db/index.js';
 import { HttpError, badRequest, conflict, idParam, notFound } from '../lib/http.js';
@@ -71,6 +72,31 @@ async function ensureOpenUnit(tx: Tx, userId: string, stationId: string, methodI
 const fieldRoutes: FastifyPluginAsync = async (app) => {
   const r = app.withTypeProvider<ZodTypeProvider>();
 
+  r.post('/field/station-forms', { onRequest: app.authenticate, schema: {body:z.object({
+    clientId:z.string().uuid(),stationMethodId:z.string().uuid(),fieldDate:z.iso.date(),
+    values:z.record(z.string(),z.unknown()),updatedAt:z.string().datetime({offset:true}),
+  })}}, async(req)=>{
+    const e=req.body;
+    return db.transaction(async(tx)=>{
+      const sm=(await tx.execute(sql`SELECT sm.station_id AS "stationId",m.form_schema AS "formSchema" FROM station_methods sm JOIN methods m ON m.id=sm.method_id WHERE sm.id=${e.stationMethodId} FOR SHARE OF m`)).rows[0] as {stationId:string;formSchema:FormSchema}|undefined;
+      if(!sm) throw notFound('Método de la estación');
+      if(!(await canWorkStation(req.user.sub,req.user.roles,sm.stationId))) throw new HttpError(403,'No tienes programación en esta estación');
+      const prior=(await tx.execute(sql`SELECT specialist_id AS owner,station_method_id AS "stationMethodId",schema_snapshot AS "schemaSnapshot" FROM station_method_forms WHERE client_id=${e.clientId} FOR UPDATE`)).rows[0] as {owner:string;stationMethodId:string;schemaSnapshot:FormSchema}|undefined;
+      if(prior&&prior.owner!==req.user.sub)throw new HttpError(403,'Este registro pertenece a otro especialista');
+      if(prior&&prior.stationMethodId!==e.stationMethodId)throw conflict('Este registro pertenece a otro método o estación');
+      const schema=prior?.schemaSnapshot??sm.formSchema;
+      const fields=schema.fields.filter((f)=>f.level==='estacion_metodo');
+      if(!fields.length||Object.keys(e.values).some((k)=>!fields.some((f)=>f.key===k)))throw badRequest('Campos de estación-método inválidos');
+      const errors=validateFormValues(fields,e.values);
+      if(Object.keys(errors).length)throw badRequest(Object.values(errors).join(', '));
+      await tx.execute(sql`INSERT INTO station_method_forms(client_id,station_method_id,specialist_id,field_date,"values",schema_snapshot,updated_at)
+        VALUES(${e.clientId},${e.stationMethodId},${req.user.sub},${e.fieldDate},${JSON.stringify(e.values)}::jsonb,${JSON.stringify(schema)}::jsonb,${e.updatedAt})
+        ON CONFLICT(client_id) DO UPDATE SET "values"=EXCLUDED."values",field_date=EXCLUDED.field_date,updated_at=EXCLUDED.updated_at
+        WHERE station_method_forms.updated_at <= EXCLUDED.updated_at AND station_method_forms.specialist_id=EXCLUDED.specialist_id`);
+      return {saved:true};
+    });
+  });
+
   // Los archivos llegan como cuerpo binario y se envían a MinIO en streaming (sin cargarlos en memoria).
   app.addContentTypeParser(['image/jpeg', 'audio/mp4', 'audio/m4a', 'audio/aac', 'application/octet-stream'], (_req, payload, done) =>
     done(null, payload),
@@ -85,6 +111,8 @@ const fieldRoutes: FastifyPluginAsync = async (app) => {
       if (!(await canWorkStation(userId, req.user.roles, e.stationId))) throw new HttpError(403, 'No tienes programación en esta estación');
 
       return db.transaction(async (tx) => {
+        const method = (await tx.execute(sql`SELECT form_schema AS "formSchema" FROM methods WHERE id = ${e.methodId} FOR SHARE`)).rows[0] as { formSchema: FormSchema } | undefined;
+        if (!method) throw notFound('Método');
         let unit: { id: string; code: string };
         if (e.newUnit) {
           unit = await ensureOpenUnit(tx, userId, e.stationId, e.methodId, e.newUnit);
@@ -98,9 +126,9 @@ const fieldRoutes: FastifyPluginAsync = async (app) => {
 
         const geom = e.startLat != null && e.startLng != null ? sql`ST_SetSRID(ST_MakePoint(${e.startLng}, ${e.startLat}), 4326)` : sql`NULL`;
         const prev = (await tx.execute(sql`
-          SELECT id, specialist_id AS "specialistId", client_updated_at AS "clientUpdatedAt"
+          SELECT id, specialist_id AS "specialistId", client_updated_at AS "clientUpdatedAt", form_data AS "formData"
           FROM executions WHERE client_id = ${e.clientId} FOR UPDATE`)).rows[0] as
-          | { id: string; specialistId: string; clientUpdatedAt: string | Date }
+          | { id: string; specialistId: string; clientUpdatedAt: string | Date; formData: ExecutionFormData }
           | undefined;
 
         if (prev && prev.specialistId !== userId) throw new HttpError(403, 'Este registro pertenece a otro especialista');
@@ -110,10 +138,14 @@ const fieldRoutes: FastifyPluginAsync = async (app) => {
           return { id: prev.id, clientId: e.clientId, samplingUnitId: unit.id, unitCode: unit.code, unitStatus: st.status, applied: false };
         }
 
+        const pinned = prev?.formData.schemaSnapshot;
+        if (pinned && e.formData.schemaSnapshot && canonicalFormJson(pinned) !== canonicalFormJson(e.formData.schemaSnapshot)) throw conflict('Esta evaluación usa otro formulario. Conserva su versión original.');
+        if (!pinned && !e.formData.schemaSnapshot && method.formSchema.version === 2) throw conflict('Actualiza la aplicación y el paquete de trabajo antes de sincronizar este formulario.');
+        const formData = { ...prev?.formData, ...e.formData, schemaSnapshot: pinned ?? e.formData.schemaSnapshot ?? method.formSchema };
         const values = sql`
           ${unit.id}, ${e.stationId}, ${e.methodId}, ${e.scheduleId ?? null}, ${userId}, ${e.brigadeId ?? null},
           ${e.status}, ${e.startedAt}, ${e.finishedAt ?? null}, ${geom}, ${e.startAccuracy ?? null},
-          ${JSON.stringify(e.formData)}::jsonb, ${e.formCompletedAt ?? null}, ${e.observations ?? null}, ${e.deviceId ?? null}, ${e.clientUpdatedAt}`;
+          ${JSON.stringify(formData)}::jsonb, ${e.formCompletedAt ?? null}, ${e.observations ?? null}, ${e.deviceId ?? null}, ${e.clientUpdatedAt}`;
         const row = (await tx.execute(sql`
           INSERT INTO executions (client_id, sampling_unit_id, station_id, method_id, schedule_id, specialist_id, brigade_id,
             status, started_at, finished_at, start_geom, start_accuracy, form_data, form_completed_at, observations, device_id, client_updated_at)
@@ -274,17 +306,27 @@ const fieldRoutes: FastifyPluginAsync = async (app) => {
     },
     async (req) => {
       const a = (await db.execute(sql`
-        SELECT object_key AS "objectKey", original_object_key AS "originalKey", uploaded_by_id AS "by", station_id AS "stationId",
-          upload_status AS "up", original_upload_status AS "oup"
-        FROM attachments WHERE id = ${req.params.id}`)).rows[0] as
-        | { objectKey: string; originalKey: string | null; by: string; stationId: string; up: string; oup: string }
+        SELECT a.object_key AS "objectKey", a.original_object_key AS "originalKey", a.uploaded_by_id AS "by", a.station_id AS "stationId",
+          a.upload_status AS "up", a.original_upload_status AS "oup", a.kind, a.mime_type AS "mimeType", s.code AS station,
+          su.code AS unit, m.code AS "methodCode", m.name AS "methodName", a.id,
+          to_char(a.taken_at AT TIME ZONE 'America/Lima', 'YYYYMMDD-HH24MISS') AS taken
+        FROM attachments a LEFT JOIN stations s ON s.id = a.station_id
+        LEFT JOIN sampling_units su ON su.id = a.sampling_unit_id
+        LEFT JOIN station_methods sm ON sm.id = su.station_method_id
+        LEFT JOIN methods m ON m.id = sm.method_id
+        WHERE a.id = ${req.params.id}`)).rows[0] as
+        | { objectKey: string; originalKey: string | null; by: string; stationId: string; up: string; oup: string;
+          kind: string; mimeType: string; station: string | null; unit: string | null; methodCode: string | null; methodName: string | null; id: string; taken: string }
         | undefined;
       if (!a) throw notFound('Archivo');
       if (a.by !== req.user.sub && !(await canWorkStation(req.user.sub, req.user.roles, a.stationId))) throw new HttpError(403, 'Sin acceso');
       const original = req.query.variant === 'original' && a.originalKey;
       if ((original ? a.oup : a.up) !== 'subido') throw conflict('El archivo aún no se ha subido');
-      const url = await app.minioSign.presignedGetObject(app.minioBucket, original ? a.originalKey! : a.objectKey, 15 * 60);
-      return { url };
+      const filename = a.mimeType === 'image/jpeg' ? photoDownloadName(a, !!original) : `${a.id}.${EXT[a.mimeType] ?? 'bin'}`;
+      const url = await app.minioSign.presignedGetObject(app.minioBucket, original ? a.originalKey! : a.objectKey, 15 * 60, {
+        'response-content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(filename)}`,
+      });
+      return { url, filename };
     },
   );
 };

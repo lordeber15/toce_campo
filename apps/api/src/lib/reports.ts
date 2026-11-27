@@ -1,7 +1,7 @@
 import { sql, type SQL } from 'drizzle-orm';
 import {
   BRIGADE_FLAG_LABELS, EXECUTION_STATUS_LABELS, INCIDENT_DECISION_LABELS, INCIDENT_STATUS_LABELS, INCIDENT_TYPE_LABELS,
-  STATION_STATUS_LABELS, formatUtm, latLngToUtm,
+  STATION_STATUS_LABELS, formatUtm, latLngToUtm, canonicalFormJson,
   type DailyReport, type FormField, type IncidentDecision, type IncidentStatus, type IncidentType, type ProjectTracking,
   type RecordsQuery, type TrackingMetrics,
 } from '@toce/shared';
@@ -366,7 +366,8 @@ export async function recordsWorkbook(projectId: string, f: Omit<RecordsQuery, '
   const rows = (await db.execute(sql`
     SELECT su.code AS "unitCode", e.status, ${ISO(sql`e.started_at`)} AS "startedAt", ${ISO(sql`e.finished_at`)} AS "finishedAt",
       s.code AS "stationCode", s.vegetation_unit AS "vegetationUnit", s.influence_area AS "influenceArea",
-      m.id AS "methodId", m.code AS "methodCode", m.name AS "methodName", m.form_schema AS "formSchema", sp.name AS "specialtyName",
+      m.id AS "methodId", m.code AS "methodCode", m.name AS "methodName", COALESCE(e.form_data->'schemaSnapshot', m.form_schema) AS "formSchema", sp.name AS "specialtyName",
+      COALESCE(e.form_data->'header','{}'::jsonb) AS "formHeader", COALESCE(e.form_data->'contexts','{}'::jsonb) AS "formContexts",
       b.name AS "brigadeName", u.full_name AS "specialistName",
       ST_Y(e.start_geom) AS lat, ST_X(e.start_geom) AS lng, e.start_accuracy AS accuracy, e.observations,
       COALESCE(e.form_data->'records', '[]'::jsonb) AS "formRecords",
@@ -376,9 +377,9 @@ export async function recordsWorkbook(projectId: string, f: Omit<RecordsQuery, '
     ORDER BY sp.name, m.sort_order, m.code, e.started_at, su.code`)).rows as {
       unitCode: string; status: keyof typeof EXECUTION_STATUS_LABELS; startedAt: string; finishedAt: string | null; stationCode: string;
       vegetationUnit: string | null; influenceArea: string | null; methodId: string; methodCode: string; methodName: string;
-      formSchema: { fields: FormField[] }; specialtyName: string; brigadeName: string | null; specialistName: string;
+      formSchema: { fields: FormField[]; revision?: string }; formHeader: Record<string, unknown>; formContexts: Record<string, Record<string, unknown>>; specialtyName: string; brigadeName: string | null; specialistName: string;
       lat: number | null; lng: number | null; accuracy: number | null; observations: string | null;
-      formRecords: { id: string; values: Record<string, unknown> }[]; photos: number; audios: number;
+      formRecords: { id: string; values: Record<string, unknown>; contextId?:string; group?:string }[]; photos: number; audios: number;
     }[];
   const utm = (lat: number | null, lng: number | null) => (lat == null || lng == null ? null : formatUtm(latLngToUtm(lat, lng)));
   const wb = workbook();
@@ -404,19 +405,37 @@ export async function recordsWorkbook(projectId: string, f: Omit<RecordsQuery, '
 
   // Una hoja por método con los campos de su formulario (p. ej. especies e individuos).
   const byMethod = new Map<string, typeof rows>();
-  for (const r of rows) if (r.formRecords.length) byMethod.set(r.methodId, [...(byMethod.get(r.methodId) ?? []), r]);
+  for (const r of rows) {
+    const versionKey=r.methodId+canonicalFormJson(r.formSchema);
+    byMethod.set(versionKey,[...(byMethod.get(versionKey)??[]),r]);
+  }
   for (const list of byMethod.values()) {
     const fields = list[0]!.formSchema.fields ?? [];
-    const recs = list.flatMap((r) => r.formRecords.map((rec, i) => ({ r, rec, i })));
+    const extraKeys=[...new Set(list.flatMap((r)=>[
+      ...Object.keys(r.formHeader),...Object.values(r.formContexts).flatMap(Object.keys),...r.formRecords.flatMap((rec)=>Object.keys(rec.values)),
+    ]))].filter((key)=>!fields.some((fd)=>fd.key===key));
+    const extraLabels: Record<string,string>={field_date:'Fecha de campo',field_start:'Hora de campo: inicio',field_end:'Hora de campo: término',hostExecutionId:'Evaluación del hospedero',hostCoordinates:'Coordenadas del hospedero'};
+    const recs = list.flatMap((r) => [
+      ...(Object.keys(r.formHeader).length ? [{r,rec:{id:'cabecera',values:r.formHeader},i:0,scope:'cabecera'}] : []),
+      ...Object.entries(r.formContexts).map(([key,values])=>({r,rec:{id:key,values:{...r.formHeader,...values}},i:0,scope:'subunidad'})),
+      ...r.formRecords.map((rec,i)=>({r,rec:{...rec,values:{...r.formHeader,...r.formContexts[rec.contextId??'unidad'],...rec.values}},i:i+1,scope:rec.group??'registro'})),
+    ]);
     addTable(wb, `${list[0]!.methodCode} ${list[0]!.methodName}`, [
       { header: 'Unidad', width: 16, value: (x) => x.r.unitCode },
-      { header: 'N°', value: (x) => x.i + 1 },
+      { header: 'N°', value: (x) => x.i || null },
+      { header: 'Nivel / grupo', value: (x) => x.scope },
+      { header: 'Identificador', value: (x) => x.rec.id },
+      { header: 'Versión formulario', value: (x) => x.r.formSchema.revision ?? 'original' },
       { header: 'Estación', value: (x) => x.r.stationCode },
       { header: 'Especialista', width: 26, value: (x) => x.r.specialistName },
       ...fields.map((fd) => ({
         header: fd.label, width: fd.type === 'textarea' ? 40 : fd.type === 'species' ? 28 : fd.type === 'coords' ? 26 : undefined,
         value: (x: (typeof recs)[number]) => cell(fd, x.rec.values[fd.key], utm),
       })),
+      ...extraKeys.map((key)=>({header:extraLabels[key]??key,width:24,value:(x:(typeof recs)[number])=>{
+        const value=x.rec.values[key];
+        return value==null?null:typeof value==='object'?JSON.stringify(value):String(value);
+      }})),
     ], recs);
   }
   const tag = f.from || f.to ? ` ${f.from ?? ''}${f.to && f.to !== f.from ? `_${f.to}` : ''}` : '';
@@ -431,5 +450,7 @@ function cell(f: FormField, v: unknown, utm: (lat: number | null, lng: number | 
   }
   if (f.type === 'number' && typeof v === 'string' && v.trim() !== '' && !Number.isNaN(Number(v))) return Number(v);
   if (f.type === 'date' && typeof v === 'string') return v.length > 10 ? limaDateTime(v) : ddmmyyyy(v);
+  if (Array.isArray(v)) return v.map((x)=>f.optionLabels?.[String(x)]??String(x)).join(', ');
+  if (f.type === 'select') return f.optionLabels?.[String(v)] ?? String(v);
   return v;
 }

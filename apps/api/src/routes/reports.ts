@@ -1,3 +1,4 @@
+import { photoDownloadName } from '@toce/shared';
 import type { FastifyInstance, FastifyPluginAsync, FastifyReply, FastifyRequest } from 'fastify';
 import type { ZodTypeProvider } from '@fastify/type-provider-zod';
 import { once } from 'node:events';
@@ -12,7 +13,7 @@ import { XLSX_MIME } from '../lib/xlsx.js';
 import { RECORDS_FROM, recordsWhere } from './records.js';
 
 const dateQuery = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() });
-const exportQuery = recordsQuerySchema.omit({ page: true });
+const exportQuery = recordsQuerySchema.omit({ page: true }).extend({ photoVersion: z.enum(['rotulada', 'original']).default('rotulada') });
 const EXT: Record<string, string> = { 'image/jpeg': 'jpg', 'audio/mp4': 'm4a', 'audio/m4a': 'm4a', 'audio/aac': 'aac' };
 
 /** Nombre seguro para carpetas y archivos del ZIP (Windows incluido). */
@@ -24,11 +25,11 @@ export const disposition = (name: string) =>
   `attachment; filename="${name.normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\x20-\x7e]/g, '_').replace(/"/g, '')}"; filename*=UTF-8''${encodeURIComponent(name)}`;
 
 /** Cuántas evidencias de registros entrarían en un ZIP con estos filtros. */
-export async function evidenceCount(projectId: string, f: Omit<RecordsQuery, 'page'>) {
+export async function evidenceCount(projectId: string, f: Omit<RecordsQuery, 'page'> & { photoVersion?: 'rotulada' | 'original' }) {
   const row = (await db.execute(sql`
       SELECT count(*) FILTER (WHERE a.upload_status = 'subido')::int AS ready, count(*) FILTER (WHERE a.upload_status <> 'subido')::int AS pending,
         COALESCE(sum(CASE WHEN a.upload_status = 'subido' THEN
-          CASE WHEN a.original_upload_status = 'subido' THEN COALESCE(a.original_size_bytes, a.size_bytes) ELSE a.size_bytes END END), 0)::bigint AS bytes
+          CASE WHEN ${f.photoVersion === 'original'} AND a.original_upload_status = 'subido' THEN COALESCE(a.original_size_bytes, a.size_bytes) ELSE a.size_bytes END END), 0)::bigint AS bytes
       ${RECORDS_FROM} JOIN attachments a ON a.owner_type = 'execution' AND a.owner_id = e.id
       WHERE ${recordsWhere(projectId, f)}`)).rows[0] as { ready: number; pending: number; bytes: string };
   return { ready: row.ready, pending: row.pending, bytes: Number(row.bytes), max: EVIDENCE_MAX_FILES };
@@ -37,21 +38,22 @@ export async function evidenceCount(projectId: string, f: Omit<RecordsQuery, 'pa
 /**
  * Evidencias de registros en ZIP, organizadas automáticamente (6):
  * Proyecto / Brigada / Especialista / Estación / Método / Unidad / Fotos|Audios / archivo.
- * Usa el original en alta resolución cuando ya se subió.
+ * Las fotos se entregan con rótulo por defecto; photoVersion=original solicita la copia sin rótulo.
  */
-export async function sendEvidenceZip(app: FastifyInstance, req: FastifyRequest, reply: FastifyReply, projectId: string, f: Omit<RecordsQuery, 'page'>) {
+export async function sendEvidenceZip(app: FastifyInstance, req: FastifyRequest, reply: FastifyReply, projectId: string, f: Omit<RecordsQuery, 'page'> & { photoVersion?: 'rotulada' | 'original' }) {
   const p = (await db.execute(sql`SELECT code FROM projects WHERE id = ${projectId} AND deleted_at IS NULL`)).rows[0] as { code: string } | undefined;
   if (!p) throw notFound('Proyecto');
   const files = (await db.execute(sql`
     SELECT a.id, a.kind, a.slot_key AS "slotKey", a.mime_type AS "mimeType", a.upload_status AS "up",
-      CASE WHEN a.original_upload_status = 'subido' AND a.original_object_key IS NOT NULL THEN a.original_object_key ELSE a.object_key END AS key,
+      CASE WHEN ${f.photoVersion === 'original'} AND a.original_upload_status = 'subido' AND a.original_object_key IS NOT NULL THEN a.original_object_key ELSE a.object_key END AS key,
+      (${f.photoVersion === 'original'} AND a.original_upload_status = 'subido' AND a.original_object_key IS NOT NULL) AS original,
       to_char(a.taken_at AT TIME ZONE 'America/Lima', 'YYYYMMDD-HH24MISS') AS taken,
-      b.name AS brigade, u.full_name AS specialist, s.code AS station, m.code || ' ' || m.name AS method, su.code AS unit
+      b.name AS brigade, u.full_name AS specialist, s.code AS station, m.code || ' ' || m.name AS method, m.code AS "methodCode", m.name AS "methodName", su.code AS unit
     ${RECORDS_FROM} JOIN attachments a ON a.owner_type = 'execution' AND a.owner_id = e.id
     WHERE ${recordsWhere(projectId, f)}
     ORDER BY b.name, u.full_name, s.code, m.code, su.code, a.taken_at`)).rows as {
       id: string; kind: string; slotKey: string | null; mimeType: string; up: string; key: string; taken: string;
-      brigade: string | null; specialist: string; station: string; method: string; unit: string;
+      brigade: string | null; specialist: string; station: string; method: string; methodCode: string; methodName: string; unit: string; original: boolean;
     }[];
   const ready = files.filter((f) => f.up === 'subido');
   if (!ready.length) throw badRequest('No hay evidencias subidas con estos filtros');
@@ -63,7 +65,8 @@ export async function sendEvidenceZip(app: FastifyInstance, req: FastifyRequest,
     const folder = f.kind === 'audio' ? 'Audios' : 'Fotos';
     const label = f.kind === 'foto_metodo' ? 'metodo' : f.kind === 'audio' ? 'nota-voz' : safe(f.slotKey, 'foto');
     const dir = [root, safe(f.brigade, 'Sin brigada'), safe(f.specialist, 'Especialista'), safe(f.station, 'Estacion'), safe(f.method, 'Metodo'), safe(f.unit, 'Unidad'), folder].join('/');
-    let name = `${dir}/${f.unit}_${label}_${f.taken}.${EXT[f.mimeType] ?? 'bin'}`;
+    const filename = f.mimeType === 'image/jpeg' ? photoDownloadName(f, f.original) : `${safe(f.unit, 'Unidad')}_${label}_${f.taken}.${EXT[f.mimeType] ?? 'bin'}`;
+    let name = `${dir}/${filename}`;
     for (let i = 2; used.has(name); i++) name = `${dir}/${f.unit}_${label}_${f.taken}_${i}.${EXT[f.mimeType] ?? 'bin'}`;
     used.add(name);
     return name;

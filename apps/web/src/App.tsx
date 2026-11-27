@@ -26,6 +26,7 @@ import { ReportsPage } from './pages/Reports';
 import { PhotoMapPage } from './pages/PhotoMap';
 import { GpsTracksPage } from './pages/GpsTracks';
 import { BulkImportPage } from './pages/BulkImport';
+import { FormImportPage } from './pages/FormImport';
 import { ChangePasswordPage } from './pages/ChangePassword';
 
 export function App() {
@@ -75,6 +76,7 @@ export function App() {
           )}
           {can(...ADMIN_ROLES) && <Route path="usuarios" element={<UsersPage />} />}
           {can(...ADMIN_ROLES) && <Route path="carga-masiva" element={<BulkImportPage />} />}
+          {can(...ADMIN_ROLES) && <Route path="carga-formularios" element={<FormImportPage />} />}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
