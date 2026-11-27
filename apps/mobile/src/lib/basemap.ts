@@ -46,14 +46,14 @@ export type BasemapZone = {
 
 type ZoneStatus =
   | { status: 'none' }
-  | { status: 'downloading'; percent: number; bytes: number }
+  | { status: 'downloading'; percent: number; bytes: number; retrying?: boolean }
   | { status: 'complete'; bytes: number; downloadedAt: string | null }
   | { status: 'error'; message: string };
 
 export type BasemapState =
   | { status: 'checking' }
   | { status: 'none' }
-  | { status: 'downloading'; percent: number; bytes: number }
+  | { status: 'downloading'; percent: number; bytes: number; retrying?: boolean }
   | { status: 'complete'; bytes: number; downloadedAt: string | null }
   | { status: 'error'; message: string };
 
@@ -126,7 +126,7 @@ function aggregate(zones: BasemapZone[], st: Record<string, ZoneStatus | undefin
   const bytes = all.reduce((n, s) => n + (s.status === 'downloading' || s.status === 'complete' ? s.bytes : 0), 0);
   if (all.some((s) => s.status === 'downloading')) {
     const percent = Math.floor(all.reduce((n, s) => n + (s.status === 'complete' ? 100 : s.status === 'downloading' ? s.percent : 0), 0) / all.length);
-    return { status: 'downloading', percent, bytes };
+    return { status: 'downloading', percent, bytes, retrying: all.some((s) => s.status === 'downloading' && s.retrying) };
   }
   if (all.every((s) => s.status === 'complete')) {
     const dates = all.map((s) => (s.status === 'complete' ? s.downloadedAt : null)).filter((d): d is string => !!d).sort();
@@ -149,7 +149,13 @@ export function useBasemap(project: WpProject | undefined, brigades: WpBrigade[]
       if (s.state === 'complete' || s.percentage >= 100) setZone(key, { status: 'complete', bytes: s.completedResourceSize, downloadedAt: new Date().toISOString() });
       else setZone(key, { status: 'downloading', percent: Math.floor(s.percentage), bytes: s.completedResourceSize });
     },
-    error: (_p: OfflinePack, e: { message: string }) => setZone(key, { status: 'error', message: e.message || 'No se pudo descargar el mapa' }),
+    // Un corte de señal no detiene el paquete: MapLibre reintenta solo. Mientras descarga se avisa "reintentando".
+    error: (_p: OfflinePack, e: { message: string }) => setStatus((cur) => {
+      const now = cur[key];
+      if (now?.status === 'downloading') return { ...cur, [key]: { ...now, retrying: true } };
+      if (now?.status === 'complete') return cur;
+      return { ...cur, [key]: { status: 'error', message: e.message || 'No se pudo descargar el mapa' } };
+    }),
   }), [setZone]);
 
   /** Borra los paquetes de este proyecto que ya no corresponden (mapa de todo el proyecto, brigadas que ya no son tuyas). */
@@ -279,7 +285,7 @@ export function useWorkMaps(project: WpProject | undefined, brigades: WpBrigade[
     if (err) state = err;
     else if (st.some((x) => x.status === 'downloading')) {
       const percent = Math.floor(st.reduce((n, x) => n + (x.status === 'complete' ? 100 : x.status === 'downloading' ? x.percent : 0), 0) / st.length);
-      state = { status: 'downloading', percent, bytes };
+      state = { status: 'downloading', percent, bytes, retrying: st.some((x) => x.status === 'downloading' && x.retrying) };
     } else if (st.every((x) => x.status === 'complete')) {
       const dates = st.map((x) => (x.status === 'complete' ? x.downloadedAt : null)).filter((d): d is string => !!d).sort();
       state = { status: 'complete', bytes, downloadedAt: dates[0] ?? null };

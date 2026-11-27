@@ -29,6 +29,26 @@ const FREE_ZOOM = 7;
 const MARGIN_DEG = 0.15;
 const ATTRIBUTION = '© OpenStreetMap contributors · Protomaps';
 
+/**
+ * Vista híbrida: sobre la imagen satelital van las calles (líneas tenues) y los nombres de calles,
+ * lugares y puntos de interés del mapa OSM, en blanco con borde oscuro para leerse sobre la foto.
+ * Usan las mismas teselas que el mapa OSM: offline no suman peso donde ya está bajado.
+ */
+const HYBRID_LINES = new Set(['roads_minor', 'roads_link', 'roads_major', 'roads_highway', 'roads_bridges_minor', 'roads_bridges_link', 'roads_bridges_major', 'roads_bridges_highway', 'boundaries_country', 'boundaries']);
+const HYBRID_LABELS = new Set(['water_waterway_label', 'roads_labels_minor', 'roads_labels_major', 'water_label_lakes', 'pois', 'places_subplace', 'places_locality', 'places_region', 'places_country']);
+function hybridLayers() {
+  return layers('protomaps', namedFlavor('light'), { lang: 'es' }).flatMap((l): object[] => {
+    if (l.type === 'line' && HYBRID_LINES.has(l.id)) {
+      const boundary = l.id.startsWith('boundaries');
+      return [{ ...l, paint: { ...l.paint, 'line-color': boundary ? 'rgba(255,230,150,0.7)' : 'rgba(255,255,255,0.45)' } }];
+    }
+    if (l.type === 'symbol' && HYBRID_LABELS.has(l.id)) {
+      return [{ ...l, paint: { ...l.paint, 'text-color': '#ffffff', 'text-halo-color': 'rgba(0,0,0,0.8)', 'text-halo-width': 1.5 } }];
+    }
+    return [];
+  });
+}
+
 let archive: { pm: PMTiles; build: string; at: number } | null = null;
 async function getArchive(): Promise<PMTiles> {
   if (archive && Date.now() - archive.at < 24 * 3600 * 1000) return archive.pm;
@@ -121,7 +141,7 @@ const basemapRoutes: FastifyPluginAsync = async (app) => {
 
   /**
    * Imagen satelital (Esri World Imagery): el teléfono baja las teselas directo de Esri
-   * (orden {z}/{y}/{x}). Las fuentes son las nuestras, para los códigos de estación sobre el mapa.
+   * (orden {z}/{y}/{x}); encima, calles y nombres del mapa OSM (vista híbrida).
    * Ojo: las condiciones de Esri limitan la descarga masiva offline; para uso comercial o
    * muchos usuarios, cambiar `tiles` por un proveedor con licencia offline.
    */
@@ -131,7 +151,15 @@ const basemapRoutes: FastifyPluginAsync = async (app) => {
       version: 8,
       name: 'TOCE Satélite',
       glyphs: `${base}/fonts/{fontstack}/{range}.pbf`,
+      sprite: `${base}/sprites/light`,
       sources: {
+        protomaps: {
+          type: 'vector',
+          tiles: [`${base}/tiles/{z}/{x}/{y}.mvt`],
+          minzoom: 0,
+          maxzoom: BASEMAP_MAX_ZOOM,
+          attribution: ATTRIBUTION,
+        },
         esri: {
           type: 'raster',
           tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
@@ -144,6 +172,7 @@ const basemapRoutes: FastifyPluginAsync = async (app) => {
       layers: [
         { id: 'fondo', type: 'background', paint: { 'background-color': '#1f2a24' } },
         { id: 'satelite', type: 'raster', source: 'esri' },
+        ...hybridLayers(),
       ],
     };
   });

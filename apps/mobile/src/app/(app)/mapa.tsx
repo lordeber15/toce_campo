@@ -37,7 +37,7 @@ const TRACK_PALETTE = ['#7048E8', '#1C7ED6', '#D6336C', '#0CA678', '#F08C00', '#
 const TRACK_COLOR = TRACK_PALETTE[0]!;
 const NO_BRIGADES: WpBrigade[] = [];
 /** Última capa base elegida (se mantiene mientras la app está abierta). */
-let lastBase: BaseLayer = 'osm';
+let lastBase: BaseLayer = 'sat';
 
 /** Foto en el mapa: propia (guardada en el teléfono) o del equipo (supervisor, desde el servidor). */
 type MapPhoto =
@@ -676,7 +676,7 @@ function OfflineRow({ basemap, online }: { basemap: ReturnType<typeof useWorkMap
   if (st.status === 'downloading') {
     return (
       <View style={[s.offline, { flexDirection: 'column', alignItems: 'stretch', gap: 6 }]}>
-        <Text style={s.offlineText}>Descargando mapa y satélite {what}… {st.percent}% · {formatMb(st.bytes)}</Text>
+        <Text style={s.offlineText}>Descargando mapa y satélite {what}… {st.percent}% · {formatMb(st.bytes)}{st.retrying ? ' · señal débil, reintentando' : ''}</Text>
         <View style={s.track}><View style={[s.fill, { width: `${st.percent}%` }]} /></View>
       </View>
     );
