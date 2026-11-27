@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Image } from 'expo-image';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
-import { Camera, GeoJSONSource, Layer, Map, UserLocation, type CameraRef } from '@maplibre/maplibre-react-native';
+import { Camera, GeoJSONSource, Layer, Map, UserLocation, type CameraRef, type MapRef } from '@maplibre/maplibre-react-native';
 import {
   checkBrigadeArea, classifyPoint, distanceMeters, formatUtm, latLngToUtm,
-  type AreaCheck, type LayerKind, type PhotoMapPoint, type WpBrigade, type WpLayer, type WpStation,
+  type AreaCheck, type LayerKind, type PhotoMapPoint, type WpBounds, type WpBrigade, type WpLayer, type WpStation,
 } from '@toce/shared';
 import { api } from '../../lib/api';
 import { useField, type MapPhotoLocal } from '../../lib/field';
-import { BASEMAP_STYLE_URL, formatMb, useBasemap } from '../../lib/basemap';
+import { BASEMAP_STYLE_URL, SATELLITE_STYLE_URL, formatMb, useWorkMaps, type BaseLayer } from '../../lib/basemap';
+import { ZONE_MAX_TILES, createZone, estimateZone, pauseZone, useOfflineZones } from '../../lib/offlineZones';
 import { bearingLabel, formatDistance, usePosition } from '../../lib/location';
 import { todayLima, usePackageIndex } from '../../lib/workPackage';
 import { useAuth } from '../../lib/auth';
@@ -35,6 +36,8 @@ const PHOTO_COLOR = { inside: '#2F9E44', outside: '#E03131', unknown: '#868E96' 
 const TRACK_PALETTE = ['#7048E8', '#1C7ED6', '#D6336C', '#0CA678', '#F08C00', '#495057'];
 const TRACK_COLOR = TRACK_PALETTE[0]!;
 const NO_BRIGADES: WpBrigade[] = [];
+/** Última capa base elegida (se mantiene mientras la app está abierta). */
+let lastBase: BaseLayer = 'osm';
 
 /** Foto en el mapa: propia (guardada en el teléfono) o del equipo (supervisor, desde el servidor). */
 type MapPhoto =
@@ -45,18 +48,32 @@ type Picked = { kind: 'station'; station: WpStation } | { kind: 'point'; lat: nu
 
 /** Mapa offline: base OSM, capas del proyecto, estaciones, tu ubicación y verificación del área de influencia. */
 export default function MapScreen() {
-  const { station: stationParam } = useLocalSearchParams<{ station?: string }>();
+  const { station: stationParam, zone: zoneParam } = useLocalSearchParams<{ station?: string; zone?: string }>();
   const index = usePackageIndex();
   const { online, user } = useAuth();
   const pos = usePosition();
   const field = useField();
   const camera = useRef<CameraRef>(null);
+  const mapRef = useRef<MapRef>(null);
+  const [base, setBaseState] = useState<BaseLayer>(lastBase);
+  const setBase = (b: BaseLayer) => { lastBase = b; setBaseState(b); };
+  // Zona visible a descargar (diálogo abierto) y zonas manuales en curso.
+  const [toDownload, setToDownload] = useState<WpBounds | null>(null);
+  const manualZones = useOfflineZones();
+  const downloading = manualZones.filter((z) => z.status === 'descargando');
   const today = todayLima();
 
   const focus = stationParam ? index?.stations.get(stationParam) : undefined;
   const project = (focus ? index?.projects.get(focus.projectId) : undefined) ?? index?.pkg.projects[0];
-  // Mapa offline: un paquete por brigada del usuario (su KMZ o sus estaciones), no todo el proyecto.
-  const basemap = useBasemap(project, index?.pkg.brigades ?? NO_BRIGADES);
+  // Mapa offline (OSM + satélite): un paquete por brigada del usuario (su KMZ o sus estaciones), no todo el proyecto.
+  const basemap = useWorkMaps(project, index?.pkg.brigades ?? NO_BRIGADES);
+  // Desde "Zonas descargadas": encuadra la zona elegida.
+  useEffect(() => {
+    const b = zoneParam?.split(',').map(Number);
+    if (!b || b.length !== 4 || b.some((n) => !Number.isFinite(n))) return;
+    const t = setTimeout(() => camera.current?.fitBounds(b as WpBounds, { padding: { top: 20, right: 20, bottom: 20, left: 20 }, duration: 600 }), 300);
+    return () => clearTimeout(t);
+  }, [zoneParam]);
   // Todas las capas sirven para verificar el área; en el mapa se pueden ocultar las generales o las de la brigada.
   const layers = useMemo(() => (index?.pkg.layers ?? []).filter((l) => l.projectId === project?.id) ?? [], [index, project?.id]);
   const [hidden, setHidden] = useState<Set<string>>(new Set());
@@ -207,8 +224,9 @@ export default function MapScreen() {
     <View style={{ flex: 1, backgroundColor: '#E8ECE6' }}>
       <Stack.Screen options={{ title: `Mapa · ${project.code}` }} />
       <Map
+        ref={mapRef}
         style={{ flex: 1 }}
-        mapStyle={BASEMAP_STYLE_URL}
+        mapStyle={base === 'sat' ? SATELLITE_STYLE_URL : BASEMAP_STYLE_URL}
         logo={false}
         attribution
         attributionPosition={{ bottom: 8, right: 8 }}
@@ -382,11 +400,47 @@ export default function MapScreen() {
         <Pressable style={s.fab} onPress={fit} accessibilityRole="button" accessibilityLabel="Ver toda mi zona de trabajo">
           <Text style={s.fabText}>⤢</Text>
         </Pressable>
+        <Pressable
+          style={[s.fab, base === 'sat' && { backgroundColor: colors.primary }]}
+          onPress={() => setBase(base === 'sat' ? 'osm' : 'sat')}
+          accessibilityRole="switch"
+          accessibilityState={{ checked: base === 'sat' }}
+          accessibilityLabel="Imagen satelital"
+        >
+          <Text style={[s.fabSmall, base === 'sat' && { color: colors.white }]}>SAT</Text>
+        </Pressable>
+        <Pressable
+          style={s.fab}
+          onPress={() => void mapRef.current?.getBounds().then((b) => setToDownload(b as WpBounds))}
+          accessibilityRole="button"
+          accessibilityLabel="Descargar esta zona para usarla sin conexión"
+        >
+          <Text style={s.fabText}>⤓</Text>
+        </Pressable>
+        <Pressable style={s.fab} onPress={() => router.push('/zonas')} accessibilityRole="button" accessibilityLabel="Zonas descargadas">
+          <Text style={s.fabText}>☰</Text>
+        </Pressable>
       </View>
 
       {/* Panel inferior */}
       <View style={s.sheet}>
         <OfflineRow basemap={basemap} online={online} />
+        {downloading.map((z) => {
+          const pct = Math.min(100, Math.floor((z.done / Math.max(1, z.tiles)) * 100));
+          return (
+            <View key={z.id} style={[s.offline, { flexDirection: 'column', alignItems: 'stretch', gap: 6 }]}>
+              <View style={s.row}>
+                <Text style={[s.offlineText, { flex: 1 }]} numberOfLines={1}>
+                  {z.name} · {Math.min(z.done, z.tiles).toLocaleString('es-PE')} / {z.tiles.toLocaleString('es-PE')} teselas
+                </Text>
+                <Pressable onPress={() => void pauseZone(z.id)} hitSlop={8} accessibilityRole="button">
+                  <Text style={[s.offlineAction, { color: colors.danger }]}>Cancelar</Text>
+                </Pressable>
+              </View>
+              <View style={s.track}><View style={[s.fill, { width: `${pct}%` }]} /></View>
+            </View>
+          );
+        })}
         {picked?.kind === 'photo' ? (
           <PhotoPanel photo={picked.photo} online={online} onClose={() => setPicked(null)} />
         ) : picked?.kind === 'station' ? (
@@ -411,6 +465,60 @@ export default function MapScreen() {
             <Text style={s.hint}>Toca una estación o una foto para ver el detalle, o cualquier punto del mapa para medir desde tu ubicación.</Text>
           </View>
         )}
+      </View>
+
+      {toDownload && <DownloadDialog bounds={toDownload} online={online} onClose={() => setToDownload(null)} />}
+    </View>
+  );
+}
+
+/** Confirma la descarga de la zona visible: estimado, aviso de wifi y nombre. */
+function DownloadDialog({ bounds, online, onClose }: { bounds: WpBounds; online: boolean; onClose: () => void }) {
+  const est = useMemo(() => estimateZone(bounds), [bounds]);
+  const [name, setName] = useState(() => {
+    const d = new Date().toLocaleString('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+    return `Zona ${d.replace(/\//g, '-').replace(',', '')}`;
+  });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const start = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await createZone(name.trim() || 'Zona sin nombre', bounds);
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'No se pudo iniciar la descarga');
+      setBusy(false);
+    }
+  };
+  return (
+    <View style={s.backdrop}>
+      <View style={s.dialog}>
+        <Text style={s.h3}>Descargar esta zona</Text>
+        {est.tooBig ? (
+          <Text style={[s.body, { color: colors.warn }]}>
+            La zona visible necesita {est.tiles.toLocaleString('es-PE')} teselas (máximo {ZONE_MAX_TILES.toLocaleString('es-PE')}). Acerca el mapa y vuelve a intentarlo.
+          </Text>
+        ) : (
+          <>
+            <Text style={s.body}>
+              Imagen satelital de lo que ves en pantalla, zoom 12 a 18: unas {est.tiles.toLocaleString('es-PE')} teselas, aprox. {est.mb.toLocaleString('es-PE')} MB.
+            </Text>
+            <Text style={s.hint}>Se recomienda conectarse a wifi. Si cancelas, lo ya descargado queda guardado.</Text>
+            <TextInput value={name} onChangeText={setName} style={s.input} placeholder="Nombre de la zona" accessibilityLabel="Nombre de la zona" />
+            {!online && <Text style={[s.hint, { color: colors.warn }]}>Sin conexión: conéctate para descargar.</Text>}
+          </>
+        )}
+        {error && <Text style={[s.hint, { color: colors.danger }]}>{error}</Text>}
+        <View style={[s.row, { justifyContent: 'flex-end', gap: 18, paddingTop: 4 }]}>
+          <Pressable onPress={onClose} hitSlop={8} accessibilityRole="button"><Text style={[s.offlineAction, { color: colors.text2, fontSize: 15 }]}>Cerrar</Text></Pressable>
+          {!est.tooBig && (
+            <Pressable onPress={() => void start()} disabled={busy || !online} hitSlop={8} accessibilityRole="button">
+              <Text style={[s.offlineAction, { fontSize: 15 }, (busy || !online) && { opacity: 0.4 }]}>{busy ? 'Iniciando…' : 'Descargar'}</Text>
+            </Pressable>
+          )}
+        </View>
       </View>
     </View>
   );
@@ -540,7 +648,7 @@ function PointPanel({ lat, lng, me, layers, onClose }: {
   );
 }
 
-function OfflineRow({ basemap, online }: { basemap: ReturnType<typeof useBasemap>; online: boolean }) {
+function OfflineRow({ basemap, online }: { basemap: ReturnType<typeof useWorkMaps>; online: boolean }) {
   const st = basemap.state;
   if (st.status === 'checking') return null;
   const notes = basemap.notes.length > 0 && (
@@ -554,7 +662,7 @@ function OfflineRow({ basemap, online }: { basemap: ReturnType<typeof useBasemap
     return (
       <View style={{ gap: 4 }}>
       <View style={[s.offline, s.offlineOk]}>
-        <Text style={[s.offlineText, { color: colors.primary }]}>Mapa disponible sin conexión · {formatMb(st.bytes)}</Text>
+        <Text style={[s.offlineText, { color: colors.primary }]}>Mapa y satélite sin conexión · {formatMb(st.bytes)}</Text>
         {online && (
           <Pressable onPress={() => void basemap.redownload()} hitSlop={8} accessibilityRole="button">
             <Text style={s.offlineAction}>Actualizar</Text>
@@ -568,7 +676,7 @@ function OfflineRow({ basemap, online }: { basemap: ReturnType<typeof useBasemap
   if (st.status === 'downloading') {
     return (
       <View style={[s.offline, { flexDirection: 'column', alignItems: 'stretch', gap: 6 }]}>
-        <Text style={s.offlineText}>Descargando mapa {what}… {st.percent}% · {formatMb(st.bytes)}</Text>
+        <Text style={s.offlineText}>Descargando mapa y satélite {what}… {st.percent}% · {formatMb(st.bytes)}</Text>
         <View style={s.track}><View style={[s.fill, { width: `${st.percent}%` }]} /></View>
       </View>
     );
@@ -604,6 +712,10 @@ const s = StyleSheet.create({
   fabs: { position: 'absolute', right: 12, top: 110, gap: 10 },
   fab: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border, elevation: 3 },
   fabText: { fontSize: 22, color: colors.primary, fontWeight: '700' },
+  fabSmall: { fontSize: 12, color: colors.primary, fontWeight: '800' },
+  backdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', padding: 24 },
+  dialog: { backgroundColor: colors.surface, borderRadius: radius + 2, padding: 18, gap: 10 },
+  input: { borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, color: colors.text, fontSize: 15 },
   sheet: { position: 'absolute', left: 10, right: 10, bottom: 28, backgroundColor: colors.surface, borderRadius: radius + 2, padding: 14, gap: 10, borderWidth: 1, borderColor: colors.border, elevation: 6 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   h3: { fontSize: 16, fontWeight: '700', color: colors.text },

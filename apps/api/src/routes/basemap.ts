@@ -119,6 +119,35 @@ const basemapRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
+  /**
+   * Imagen satelital (Esri World Imagery): el teléfono baja las teselas directo de Esri
+   * (orden {z}/{y}/{x}). Las fuentes son las nuestras, para los códigos de estación sobre el mapa.
+   * Ojo: las condiciones de Esri limitan la descarga masiva offline; para uso comercial o
+   * muchos usuarios, cambiar `tiles` por un proveedor con licencia offline.
+   */
+  r.get('/basemap/satellite.json', async (req) => {
+    const base = `${req.protocol}://${req.headers.host}/api/basemap`;
+    return {
+      version: 8,
+      name: 'TOCE Satélite',
+      glyphs: `${base}/fonts/{fontstack}/{range}.pbf`,
+      sources: {
+        esri: {
+          type: 'raster',
+          tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+          tileSize: 256,
+          minzoom: 0,
+          maxzoom: 18,
+          attribution: 'Esri, Maxar, Earthstar Geographics, and the GIS User Community',
+        },
+      },
+      layers: [
+        { id: 'fondo', type: 'background', paint: { 'background-color': '#1f2a24' } },
+        { id: 'satelite', type: 'raster', source: 'esri' },
+      ],
+    };
+  });
+
   r.get(
     '/basemap/tiles/:z/:x/:y.mvt',
     { schema: { params: z.object({ z: z.coerce.number().int().min(0).max(BASEMAP_MAX_ZOOM), x: z.coerce.number().int().min(0), y: z.coerce.number().int().min(0) }) } },

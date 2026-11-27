@@ -23,6 +23,7 @@ export default function AppLayout() {
           <Stack.Screen name="registro" options={{ title: 'Registro' }} />
           <Stack.Screen name="camara" options={{ headerShown: false, animation: 'fade' }} />
           <Stack.Screen name="mapa" options={{ title: 'Mapa' }} />
+          <Stack.Screen name="zonas" options={{ title: 'Zonas descargadas' }} />
           <Stack.Screen name="alertas" options={{ title: 'Mis alertas' }} />
           <Stack.Screen name="alerta/nueva" options={{ title: 'Registrar alerta' }} />
           <Stack.Screen name="alerta/[id]" options={{ title: 'Alerta' }} />

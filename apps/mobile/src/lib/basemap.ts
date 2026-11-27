@@ -5,15 +5,21 @@ import { API_URL } from './config';
 
 /** Estilo del mapa base OSM servido por nuestro API (ver apps/api/src/routes/basemap.ts). */
 export const BASEMAP_STYLE_URL = `${API_URL}/basemap/style.json`;
-/** El servidor tiene teselas hasta z15; el mapa amplía más allá sin perder las capas. */
-const MIN_ZOOM = 8;
-const MAX_ZOOM = 15;
-/** Si la zona es grande se baja el detalle máximo, pero no por debajo de este zoom (por debajo no sirve en campo). */
-const MIN_DETAIL_ZOOM = 12;
-/** Límite de teselas guardadas en el teléfono (MapLibre lo aplica al total de paquetes). */
-const TILE_LIMIT = 30000;
-/** Reserva para no rozar el límite (teselas de estilo, redondeos). */
-const TILE_BUDGET = Math.floor(TILE_LIMIT * 0.95);
+/** Estilo satelital (Esri World Imagery); las teselas se bajan directo de Esri. */
+export const SATELLITE_STYLE_URL = `${API_URL}/basemap/satellite.json`;
+
+export type BaseLayer = 'osm' | 'sat';
+/**
+ * Por capa: rango de zoom del paquete, detalle mínimo aceptable y cupo de teselas.
+ * OSM: el servidor tiene teselas hasta z15; el mapa amplía más allá sin perder las capas.
+ * Satélite: por debajo de z12 no sirve en campo; si la zona es grande se baja hasta z15.
+ */
+const LAYERS: Record<BaseLayer, { style: string; minZoom: number; maxZoom: number; minDetail: number; budget: number }> = {
+  osm: { style: BASEMAP_STYLE_URL, minZoom: 8, maxZoom: 15, minDetail: 12, budget: 28500 },
+  sat: { style: SATELLITE_STYLE_URL, minZoom: 12, maxZoom: 18, minDetail: 15, budget: 40000 },
+};
+/** Límite de teselas guardadas en el teléfono (MapLibre lo aplica al total de paquetes): OSM + satélite de brigada + zonas manuales. */
+export const TILE_LIMIT = 150000;
 
 OfflineManager.setTileCountLimit(TILE_LIMIT);
 
@@ -51,22 +57,24 @@ export type BasemapState =
   | { status: 'complete'; bytes: number; downloadedAt: string | null }
   | { status: 'error'; message: string };
 
-type Meta = { projectId: string; zoneKey?: string; brigadeId?: string | null; bounds: number[]; maxZoom?: number; downloadedAt?: string };
+type Meta = { layer?: BaseLayer; projectId: string; zoneKey?: string; brigadeId?: string | null; bounds: number[]; maxZoom?: number; downloadedAt?: string };
 
 const sameBounds = (a: number[] | undefined, b: number[]) => !!a && a.length === b.length && a.every((v, i) => Math.abs(v - b[i]!) < 1e-6);
 const metaOf = (p: OfflinePack) => (p.metadata ?? {}) as Partial<Meta>;
 /** Clave de un paquete guardado; los de versiones anteriores (todo el proyecto) no tienen zoneKey. */
 const keyOf = (p: OfflinePack) => metaOf(p).zoneKey ?? `project:${metaOf(p).projectId ?? ''}`;
 
+const layerOf = (p: OfflinePack): BaseLayer => (metaOf(p).layer === 'sat' ? 'sat' : 'osm');
+
 const lng2x = (lng: number, z: number) => Math.floor(((lng + 180) / 360) * 2 ** z);
 const lat2y = (lat: number, z: number) => {
   const r = (Math.max(-85, Math.min(85, lat)) * Math.PI) / 180;
   return Math.floor(((1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2) * 2 ** z);
 };
-/** Teselas de una caja entre MIN_ZOOM y maxZoom. */
-export function tileCount(b: WpBounds, maxZoom: number): number {
+/** Teselas de una caja entre minZoom y maxZoom. */
+export function tileCount(b: WpBounds, maxZoom: number, minZoom = LAYERS.osm.minZoom): number {
   let n = 0;
-  for (let z = MIN_ZOOM; z <= maxZoom; z++) n += (lng2x(b[2], z) - lng2x(b[0], z) + 1) * (lat2y(b[1], z) - lat2y(b[3], z) + 1);
+  for (let z = minZoom; z <= maxZoom; z++) n += (lng2x(b[2], z) - lng2x(b[0], z) + 1) * (lat2y(b[1], z) - lat2y(b[3], z) + 1);
   return n;
 }
 
@@ -74,14 +82,17 @@ const withMargin = (b: WpBounds): WpBounds =>
   [b[0] - WORK_AREA_MARGIN_DEG, b[1] - WORK_AREA_MARGIN_DEG, b[2] + WORK_AREA_MARGIN_DEG, b[3] + WORK_AREA_MARGIN_DEG];
 
 /** Zonas offline del usuario en un proyecto, con el detalle ajustado al límite de teselas. */
-export function planZones(project: WpProject | undefined, brigades: WpBrigade[]): BasemapZone[] {
+export function planZones(project: WpProject | undefined, brigades: WpBrigade[], layer: BaseLayer = 'osm'): BasemapZone[] {
   if (!project) return [];
+  const L = LAYERS[layer];
+  const prefix = layer === 'osm' ? '' : `${layer}:`;
+  const count = (b: WpBounds, maxZoom: number) => tileCount(b, maxZoom, L.minZoom);
   const mine = brigades.filter((b) => b.projectId === project.id);
   // Paquete de trabajo nuevo: las brigadas traen `bounds` (aunque sea null). Uno antiguo no lo trae.
   const modern = mine.some((b) => b.bounds !== undefined);
   const raw = modern
-    ? mine.filter((b) => b.bounds).map((b) => ({ key: `brigade:${b.id}`, brigadeId: b.id as string | null, label: b.name, bounds: withMargin(b.bounds!) }))
-    : project.bounds ? [{ key: `project:${project.id}`, brigadeId: null, label: project.code, bounds: withMargin(project.bounds) }] : [];
+    ? mine.filter((b) => b.bounds).map((b) => ({ key: `${prefix}brigade:${b.id}`, brigadeId: b.id as string | null, label: b.name, bounds: withMargin(b.bounds!) }))
+    : project.bounds ? [{ key: `${prefix}project:${project.id}`, brigadeId: null, label: project.code, bounds: withMargin(project.bounds) }] : [];
   // Brigadas con la misma zona (p. ej. las mismas estaciones): un solo paquete.
   const zones: typeof raw = [];
   for (const z of raw) {
@@ -90,17 +101,17 @@ export function planZones(project: WpProject | undefined, brigades: WpBrigade[])
     else zones.push({ ...z });
   }
   // Reparte el límite: cada zona, de la más chica a la más grande, toma el mayor detalle que entra en su parte.
-  const order = [...zones].sort((a, b) => tileCount(a.bounds, MAX_ZOOM) - tileCount(b.bounds, MAX_ZOOM));
-  let left = TILE_BUDGET;
+  const order = [...zones].sort((a, b) => count(a.bounds, L.maxZoom) - count(b.bounds, L.maxZoom));
+  let left = L.budget;
   const out = new Map<string, BasemapZone>();
   order.forEach((z, i) => {
     const share = left / (order.length - i);
-    let maxZoom = MAX_ZOOM;
-    while (maxZoom > MIN_DETAIL_ZOOM && tileCount(z.bounds, maxZoom) > share) maxZoom--;
-    const tiles = tileCount(z.bounds, maxZoom);
+    let maxZoom = L.maxZoom;
+    while (maxZoom > L.minDetail && count(z.bounds, maxZoom) > share) maxZoom--;
+    const tiles = count(z.bounds, maxZoom);
     const tooBig = tiles > share;
     if (!tooBig) left -= tiles;
-    out.set(z.key, { ...z, projectId: project.id, maxZoom, tiles, reduced: maxZoom < MAX_ZOOM, tooBig });
+    out.set(z.key, { ...z, projectId: project.id, maxZoom, tiles, reduced: maxZoom < L.maxZoom, tooBig });
   });
   return zones.map((z) => out.get(z.key)!);
 }
@@ -124,9 +135,10 @@ function aggregate(zones: BasemapZone[], st: Record<string, ZoneStatus | undefin
   return { status: 'none' };
 }
 
-/** Mapa offline de las brigadas del usuario en el proyecto: estado, descarga (reanudable) y actualización. */
-export function useBasemap(project: WpProject | undefined, brigades: WpBrigade[] = []) {
-  const zones = useMemo(() => planZones(project, brigades), [project, brigades]);
+/** Mapa offline (una capa) de las brigadas del usuario en el proyecto: estado, descarga (reanudable) y actualización. */
+export function useBasemap(project: WpProject | undefined, brigades: WpBrigade[] = [], layer: BaseLayer = 'osm') {
+  const L = LAYERS[layer];
+  const zones = useMemo(() => planZones(project, brigades, layer), [project, brigades, layer]);
   const zonesKey = zones.map((z) => `${z.key}@${z.bounds.join(',')}@${z.maxZoom}`).join('|');
   const [status, setStatus] = useState<Record<string, ZoneStatus>>({});
   const packs = useRef(new Map<string, OfflinePack>());
@@ -145,11 +157,11 @@ export function useBasemap(project: WpProject | undefined, brigades: WpBrigade[]
     if (!project) return;
     const keep = new Set(zones.filter((z) => !z.tooBig).map((z) => z.key));
     for (const p of all) {
-      if (metaOf(p).projectId !== project.id || keep.has(keyOf(p))) continue;
+      if (metaOf(p).projectId !== project.id || layerOf(p) !== layer || keep.has(keyOf(p))) continue;
       OfflineManager.removeListener(p.id);
       await OfflineManager.deletePack(p.id).catch(() => undefined);
     }
-  }, [project?.id, zonesKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [project?.id, zonesKey, layer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refresh = useCallback(async () => {
     const next: Record<string, ZoneStatus> = {};
@@ -167,7 +179,7 @@ export function useBasemap(project: WpProject | undefined, brigades: WpBrigade[]
         const st = await pack.status();
         if (st.state === 'complete' || st.percentage >= 100) {
           // Si la zona cambió (otro KMZ, nuevas estaciones o menos detalle), hay que volver a descargar.
-          const same = sameBounds(meta.bounds, z.bounds) && (meta.maxZoom ?? MAX_ZOOM) === z.maxZoom;
+          const same = sameBounds(meta.bounds, z.bounds) && (meta.maxZoom ?? L.maxZoom) === z.maxZoom;
           next[z.key] = same ? { status: 'complete', bytes: st.completedResourceSize, downloadedAt: meta.downloadedAt ?? null } : { status: 'none' };
         } else {
           next[z.key] = { status: 'downloading', percent: Math.floor(st.percentage), bytes: st.completedResourceSize };
@@ -197,16 +209,16 @@ export function useBasemap(project: WpProject | undefined, brigades: WpBrigade[]
     try {
       const existing = packs.current.get(z.key);
       if (existing) await OfflineManager.deletePack(existing.id).catch(() => undefined);
-      const m: Meta = { projectId: z.projectId, zoneKey: z.key, brigadeId: z.brigadeId, bounds: z.bounds, maxZoom: z.maxZoom, downloadedAt: new Date().toISOString() };
+      const m: Meta = { layer, projectId: z.projectId, zoneKey: z.key, brigadeId: z.brigadeId, bounds: z.bounds, maxZoom: z.maxZoom, downloadedAt: new Date().toISOString() };
       packs.current.set(z.key, await OfflineManager.createPack(
-        { mapStyle: BASEMAP_STYLE_URL, bounds: z.bounds, minZoom: MIN_ZOOM, maxZoom: z.maxZoom, metadata: m },
+        { mapStyle: L.style, bounds: z.bounds, minZoom: L.minZoom, maxZoom: z.maxZoom, metadata: m },
         l.progress,
         l.error,
       ));
     } catch (e) {
       setZone(z.key, { status: 'error', message: `${z.label}: ${e instanceof Error ? e.message : 'No se pudo descargar el mapa'}` });
     }
-  }, [listeners, setZone]);
+  }, [listeners, setZone, layer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Descarga (o reanuda) las zonas que faltan. Requiere conexión con el servidor. */
   const download = useCallback(async () => {
@@ -218,7 +230,7 @@ export function useBasemap(project: WpProject | undefined, brigades: WpBrigade[]
       if (z.tooBig || status[z.key]?.status === 'complete') continue;
       const existing = packs.current.get(z.key);
       const meta = existing ? metaOf(existing) : null;
-      if (existing && meta && sameBounds(meta.bounds, z.bounds) && (meta.maxZoom ?? MAX_ZOOM) === z.maxZoom) {
+      if (existing && meta && sameBounds(meta.bounds, z.bounds) && (meta.maxZoom ?? L.maxZoom) === z.maxZoom) {
         try {
           const l = listeners(z.key);
           setZone(z.key, { status: 'downloading', percent: 0, bytes: 0 });
@@ -247,6 +259,37 @@ export function useBasemap(project: WpProject | undefined, brigades: WpBrigade[]
     ? ([Math.min(...zones.map((z) => z.bounds[0])), Math.min(...zones.map((z) => z.bounds[1])), Math.max(...zones.map((z) => z.bounds[2])), Math.max(...zones.map((z) => z.bounds[3]))] as WpBounds)
     : null;
   return { state, zones, notes, download, redownload, bounds };
+}
+
+/**
+ * Mapas de trabajo de la brigada: base OSM + imagen satelital de la misma zona, descargados juntos.
+ * Solo la zona de tus brigadas (KMZ o estaciones), así el peso satelital queda acotado.
+ */
+export function useWorkMaps(project: WpProject | undefined, brigades: WpBrigade[] = []) {
+  const osm = useBasemap(project, brigades, 'osm');
+  const sat = useBasemap(project, brigades, 'sat');
+  const parts = [osm, sat].filter((b) => b.zones.some((z) => !z.tooBig));
+  const st = parts.map((b) => b.state);
+  let state: BasemapState;
+  if (!st.length) state = { status: 'none' };
+  else if (st.some((x) => x.status === 'checking')) state = { status: 'checking' };
+  else {
+    const err = st.find((x): x is Extract<BasemapState, { status: 'error' }> => x.status === 'error');
+    const bytes = st.reduce((n, x) => n + (x.status === 'downloading' || x.status === 'complete' ? x.bytes : 0), 0);
+    if (err) state = err;
+    else if (st.some((x) => x.status === 'downloading')) {
+      const percent = Math.floor(st.reduce((n, x) => n + (x.status === 'complete' ? 100 : x.status === 'downloading' ? x.percent : 0), 0) / st.length);
+      state = { status: 'downloading', percent, bytes };
+    } else if (st.every((x) => x.status === 'complete')) {
+      const dates = st.map((x) => (x.status === 'complete' ? x.downloadedAt : null)).filter((d): d is string => !!d).sort();
+      state = { status: 'complete', bytes, downloadedAt: dates[0] ?? null };
+    } else state = { status: 'none' };
+  }
+  const download = async () => { await osm.download(); await sat.download(); };
+  const redownload = async () => { await osm.redownload(); await sat.redownload(); };
+  // Los avisos de "no hay zona" salen iguales en ambas capas: se muestran una vez.
+  const notes = [...osm.notes, ...sat.notes.filter((n) => !osm.notes.includes(n)).map((n) => `Satélite · ${n}`)];
+  return { state, zones: osm.zones, notes, download, redownload, bounds: osm.bounds };
 }
 
 export const formatMb = (bytes: number) => `${(bytes / (1024 * 1024)).toLocaleString('es-PE', { maximumFractionDigits: 1 })} MB`;
