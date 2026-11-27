@@ -26,4 +26,5 @@ COPY --from=build /repo/packages/shared/package.json packages/shared/package.jso
 COPY --from=build /repo/packages/shared/dist packages/shared/dist
 WORKDIR /repo/apps/api
 EXPOSE 4000
-CMD ["node", "dist/server.js"]
+# Aplica solo las migraciones pendientes (Drizzle las registra en drizzle.__drizzle_migrations) y luego arranca.
+CMD ["sh", "-c", "node dist/db/migrate.js && node dist/server.js"]
