@@ -127,7 +127,24 @@ function BrigadeDialog({ projectId, brigade, onClose, onSaved }: { projectId: st
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
 
   const all = candidates.data ?? [];
-  const specialists = all.filter((c) => c.roles.includes('especialista') && (!f.specialtyId || c.specialtyId === f.specialtyId));
+  // Integrantes actuales (de la carga masiva o de antes): siempre se muestran, aunque no coincidan con la especialidad.
+  const current = new Set(brigade?.members.map((m) => m.id));
+  const fits = (c: Candidate) => !f.specialtyId || c.specialtyId === f.specialtyId;
+  const specialists = all.filter((c) => (c.roles.includes('especialista') && fits(c)) || current.has(c.id));
+  const [removedBySpec, setRemovedBySpec] = useState<string[]>([]);
+  const changeSpecialty = (specialtyId: string) => {
+    // Conserva a los que siguen calzando con la nueva especialidad; avisa quiénes salen.
+    const keep = new Set<string>();
+    const out: string[] = [];
+    for (const id of members) {
+      const c = all.find((x) => x.id === id);
+      if (!c || !specialtyId || c.specialtyId === specialtyId || !c.roles.includes('especialista')) keep.add(id);
+      else out.push(c.fullName);
+    }
+    setMembers(keep);
+    setRemovedBySpec(out);
+    setF({ ...f, specialtyId, leaderId: keep.has(f.leaderId) ? f.leaderId : '' });
+  };
   const withRole = (r: Role) => all.filter((c) => c.roles.includes(r));
   const leaders = specialists.filter((c) => members.has(c.id));
 
@@ -173,7 +190,7 @@ function BrigadeDialog({ projectId, brigade, onClose, onSaved }: { projectId: st
       </div>
       <div className="grid-2">
         <div className="field"><label htmlFor="b-spec">Especialidad</label>
-          <select id="b-spec" className="input" value={f.specialtyId} onChange={(e) => { setF({ ...f, specialtyId: e.target.value, leaderId: '' }); setMembers(new Set()); }}>
+          <select id="b-spec" className="input" value={f.specialtyId} onChange={(e) => changeSpecialty(e.target.value)}>
             <option value="">Mixta (varias especialidades)</option>
             {(specialties.data ?? []).map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
@@ -184,15 +201,26 @@ function BrigadeDialog({ projectId, brigade, onClose, onSaved }: { projectId: st
         <label>Especialistas</label>
         <div className="pill-list">
           {specialists.map((c) => {
-            const elsewhere = c.brigadeId && c.brigadeId !== brigade?.id;
+            // Los integrantes actuales pueden estar en otra brigada en otras fechas (carga masiva): no se bloquean.
+            const elsewhere = c.brigadeId && c.brigadeId !== brigade?.id && !current.has(c.id);
+            const other = !fits(c);
             return (
-              <button key={c.id} type="button" className="pill" aria-pressed={members.has(c.id)} disabled={!!elsewhere} title={elsewhere ? 'Ya pertenece a otra brigada' : c.dni} onClick={() => toggle(c.id)}>
-                {c.fullName}
+              <button
+                key={c.id} type="button" className="pill" aria-pressed={members.has(c.id)} disabled={!!elsewhere}
+                title={elsewhere ? 'Ya pertenece a otra brigada' : other ? `${c.dni} · otra especialidad` : c.dni}
+                onClick={() => toggle(c.id)}
+              >
+                {c.fullName}{other ? ' · otra especialidad' : ''}
               </button>
             );
           })}
           {!specialists.length && <span className="hint">No hay especialistas de esa especialidad. Créalos en Usuarios.</span>}
         </div>
+        {removedBySpec.length > 0 && (
+          <span className="hint" style={{ color: 'var(--warn)' }}>
+            Por el cambio de especialidad salen: {removedBySpec.join(', ')}. Vuelve a la especialidad anterior o márcalos si debían quedarse.
+          </span>
+        )}
         {brigade && brigade.members.some(validity) && (
           <span className="hint">
             Vigencia (de la carga masiva, solo lectura): {brigade.members.filter(validity).map((m) => `${m.fullName} ${validity(m)}`).join(' · ')}

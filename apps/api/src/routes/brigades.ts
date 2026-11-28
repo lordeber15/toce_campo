@@ -45,16 +45,23 @@ const brigadesRoutes: FastifyPluginAsync = async (app) => {
     if (ids.length) {
       const found = await tx.select({ id: users.id, fullName: users.fullName, roles: users.roles, specialtyId: users.specialtyId }).from(users).where(and(inArray(users.id, ids), isNull(users.deletedAt)));
       if (found.length !== ids.length) throw badRequest('Algún miembro no existe');
+      // Los que ya estaban (p. ej. de la carga masiva) se conservan tal cual; solo se validan los que se agregan.
+      const kept = new Set((await tx.select({ id: brigadeMembers.userId }).from(brigadeMembers)
+        .where(and(eq(brigadeMembers.brigadeId, brigadeId), isNull(brigadeMembers.leftAt)))).map((m) => m.id));
       if (specialtyId) {
-        const wrong = found.filter((u) => u.roles.includes('especialista') && u.specialtyId !== specialtyId);
+        const wrong = found.filter((u) => !kept.has(u.id) && u.roles.includes('especialista') && u.specialtyId !== specialtyId);
         if (wrong.length) throw badRequest(`Especialidad distinta a la de la brigada: ${wrong.map((u) => u.fullName).join(', ')}`);
       }
-      // Un especialista solo puede estar en una brigada activa del proyecto.
+      // Un especialista no puede estar en otra brigada activa del proyecto en fechas que se cruzan
+      // (sin fechas = todo el periodo), igual que en la carga masiva.
       const busy = await tx.execute(sql`
         SELECT u.full_name AS name, b.name AS brigade FROM brigade_members m
         JOIN brigades b ON b.id = m.brigade_id JOIN users u ON u.id = m.user_id
+        LEFT JOIN brigade_members mine ON mine.brigade_id = ${brigadeId} AND mine.user_id = m.user_id AND mine.left_at IS NULL
         WHERE b.project_id = ${projectId} AND b.is_active AND b.id <> ${brigadeId} AND m.left_at IS NULL
-          AND m.user_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`);
+          AND m.user_id IN (${sql.join(ids.map((i) => sql`${i}`), sql`, `)})
+          AND coalesce(m.valid_from, '0001-01-01'::date) <= coalesce(mine.valid_to, '9999-12-31'::date)
+          AND coalesce(mine.valid_from, '0001-01-01'::date) <= coalesce(m.valid_to, '9999-12-31'::date)`);
       if (busy.rows.length) {
         throw conflict(`Ya pertenecen a otra brigada: ${(busy.rows as { name: string; brigade: string }[]).map((b) => `${b.name} (${b.brigade})`).join(', ')}`);
       }
