@@ -4,8 +4,11 @@ import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { FetchSource, PMTiles } from 'pmtiles';
 import { layers, namedFlavor } from '@protomaps/basemaps';
+import { WEB_ROLES, hasAnyRole } from '@toce/shared';
 import { db } from '../db/index.js';
 import { env } from '../env.js';
+import { HttpError, idParam } from '../lib/http.js';
+import { SAT_MAX_TILES, packKey, planSatellite, readMeta, startBuild, type SatPlan } from '../lib/satellitePack.js';
 
 /**
  * Mapa base OpenStreetMap para la app, servido por nuestro servidor.
@@ -175,6 +178,50 @@ const basemapRoutes: FastifyPluginAsync = async (app) => {
         ...hybridLayers(),
       ],
     };
+  });
+
+  /**
+   * Imagen satelital offline de una brigada (un archivo PMTiles con su KMZ completo y franjas).
+   * ready: URL firmada para descargarlo. building: el servidor lo está armando (consultar de nuevo).
+   */
+  type PlanEntry = { plan: SatPlan | null | undefined; at: number; pending?: Promise<void>; error?: string };
+  const plans = new Map<string, PlanEntry>();
+  r.get('/basemap/satellite/brigade/:id', { onRequest: app.authenticate, schema: { params: idParam } }, async (req) => {
+    const brigadeId = req.params.id;
+    const userId = req.user.sub;
+    const allowed = hasAnyRole(req.user.roles, WEB_ROLES) || (await db.execute(sql`
+      SELECT 1 FROM brigades b WHERE b.id = ${brigadeId} AND (
+        b.leader_id = ${userId} OR b.supervisor_id = ${userId} OR b.logistician_id = ${userId}
+        OR EXISTS (SELECT 1 FROM brigade_members bm WHERE bm.brigade_id = b.id AND bm.user_id = ${userId} AND bm.left_at IS NULL))`)).rows.length > 0;
+    if (!allowed) throw new HttpError(403, 'No perteneces a esta brigada');
+
+    // El plan (qué teselas) tarda unos segundos: se calcula en segundo plano y se recalcula cada
+    // 10 min (el KMZ o las estaciones pueden cambiar). Mientras tanto el teléfono ve "building".
+    let cached = plans.get(brigadeId);
+    if (!cached || (cached.at && Date.now() - cached.at > 10 * 60 * 1000) || cached.error) {
+      const entry: PlanEntry = { plan: undefined, at: 0 };
+      entry.pending = planSatellite(brigadeId)
+        .then((p) => { entry.plan = p; entry.at = Date.now(); })
+        .catch((e: unknown) => { entry.error = e instanceof Error ? e.message : 'No se pudo calcular la zona'; app.log.error({ err: e, brigadeId }, 'Plan satelital'); });
+      // Si había un plan anterior, se sigue usando mientras se recalcula.
+      if (cached?.plan !== undefined && !cached.error) { entry.plan = cached.plan; }
+      plans.set(brigadeId, entry);
+      cached = entry;
+    }
+    if (cached.error) return { status: 'error' as const, message: cached.error };
+    if (cached.plan === undefined) return { status: 'building' as const, done: 0, total: 0 };
+    const plan = cached.plan;
+    if (!plan) return { status: 'none' as const, message: 'La brigada no tiene KMZ, polígono ni estaciones.' };
+    if (plan.tiles.length > SAT_MAX_TILES) return { status: 'tooBig' as const, message: 'La zona de la brigada es demasiado grande para el mapa satelital offline.' };
+
+    const meta = await readMeta(app.minio, app.minioBucket, brigadeId);
+    if (meta && meta.version === plan.version) {
+      const url = await app.minioSign.presignedGetObject(app.minioBucket, packKey(brigadeId, meta.version), 6 * 3600);
+      return { status: 'ready' as const, url, ...meta };
+    }
+    const b = startBuild(app.minio, app.minioBucket, plan, (e) => app.log.error({ err: e, brigadeId }, 'Mapa satelital de brigada'));
+    if (b.error) return { status: 'error' as const, message: b.error, done: b.done, total: b.total };
+    return { status: 'building' as const, done: b.done, total: b.total, maxZoom: plan.maxZoom, reduced: plan.reduced };
   });
 
   r.get(

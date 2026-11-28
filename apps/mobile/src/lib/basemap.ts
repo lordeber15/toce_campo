@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { OfflineManager, type OfflinePack } from '@maplibre/maplibre-react-native';
 import { WORK_AREA_MARGIN_DEG, type WpBounds, type WpBrigade, type WpProject } from '@toce/shared';
 import { API_URL } from './config';
+import { useSatellitePacks, type SatState } from './satellitePack';
 
 /** Estilo del mapa base OSM servido por nuestro API (ver apps/api/src/routes/basemap.ts). */
 export const BASEMAP_STYLE_URL = `${API_URL}/basemap/style.json`;
@@ -46,14 +47,14 @@ export type BasemapZone = {
 
 type ZoneStatus =
   | { status: 'none' }
-  | { status: 'downloading'; percent: number; bytes: number; retrying?: boolean }
+  | { status: 'downloading'; percent: number; bytes: number; retrying?: boolean; detail?: string }
   | { status: 'complete'; bytes: number; downloadedAt: string | null }
   | { status: 'error'; message: string };
 
 export type BasemapState =
   | { status: 'checking' }
   | { status: 'none' }
-  | { status: 'downloading'; percent: number; bytes: number; retrying?: boolean }
+  | { status: 'downloading'; percent: number; bytes: number; retrying?: boolean; detail?: string }
   | { status: 'complete'; bytes: number; downloadedAt: string | null }
   | { status: 'error'; message: string };
 
@@ -267,35 +268,58 @@ export function useBasemap(project: WpProject | undefined, brigades: WpBrigade[]
   return { state, zones, notes, download, redownload, bounds };
 }
 
+/** Estado del satélite de una brigada, en el formato de la fila "mapa sin conexión". */
+function satAsBasemap(x: SatState): BasemapState | null {
+  switch (x.status) {
+    case 'checking': return { status: 'checking' };
+    case 'none': return { status: 'none' };
+    case 'preparing': return { status: 'downloading', percent: x.total ? Math.floor((x.done / x.total) * 100) : 0, bytes: 0, detail: 'el servidor está preparando el satélite' };
+    case 'downloading': return { status: 'downloading', percent: x.total ? Math.floor((x.written / x.total) * 100) : 0, bytes: x.written, detail: 'descargando satélite' };
+    case 'complete': return { status: 'complete', bytes: x.bytes, downloadedAt: x.downloadedAt };
+    case 'error': return { status: 'error', message: x.message };
+    case 'unavailable': return null;
+  }
+}
+
 /**
- * Mapas de trabajo de la brigada: base OSM + imagen satelital de la misma zona, descargados juntos.
- * Solo la zona de tus brigadas (KMZ o estaciones), así el peso satelital queda acotado.
+ * Mapas de trabajo de la brigada: base OSM (paquete de MapLibre) + imagen satelital de su KMZ
+ * completo (un archivo por brigada, ver satellitePack.ts), descargados juntos.
  */
 export function useWorkMaps(project: WpProject | undefined, brigades: WpBrigade[] = []) {
   const osm = useBasemap(project, brigades, 'osm');
-  const sat = useBasemap(project, brigades, 'sat');
-  const parts = [osm, sat].filter((b) => b.zones.some((z) => !z.tooBig));
-  const st = parts.map((b) => b.state);
+  const sat = useSatellitePacks(project, brigades);
+  const satStates = sat.brigades.map((b) => sat.states[b.id]).filter((x): x is SatState => !!x);
+  const st = [
+    ...(osm.zones.some((z) => !z.tooBig) ? [osm.state] : []),
+    ...satStates.map(satAsBasemap).filter((x): x is BasemapState => !!x),
+  ];
   let state: BasemapState;
   if (!st.length) state = { status: 'none' };
   else if (st.some((x) => x.status === 'checking')) state = { status: 'checking' };
   else {
     const err = st.find((x): x is Extract<BasemapState, { status: 'error' }> => x.status === 'error');
     const bytes = st.reduce((n, x) => n + (x.status === 'downloading' || x.status === 'complete' ? x.bytes : 0), 0);
-    if (err) state = err;
-    else if (st.some((x) => x.status === 'downloading')) {
+    const active = st.filter((x): x is Extract<BasemapState, { status: 'downloading' }> => x.status === 'downloading');
+    if (active.length) {
       const percent = Math.floor(st.reduce((n, x) => n + (x.status === 'complete' ? 100 : x.status === 'downloading' ? x.percent : 0), 0) / st.length);
-      state = { status: 'downloading', percent, bytes, retrying: st.some((x) => x.status === 'downloading' && x.retrying) };
-    } else if (st.every((x) => x.status === 'complete')) {
+      state = { status: 'downloading', percent, bytes, retrying: active.some((x) => x.retrying), detail: active.find((x) => x.detail)?.detail };
+    } else if (err) state = err;
+    else if (st.every((x) => x.status === 'complete')) {
       const dates = st.map((x) => (x.status === 'complete' ? x.downloadedAt : null)).filter((d): d is string => !!d).sort();
       state = { status: 'complete', bytes, downloadedAt: dates[0] ?? null };
     } else state = { status: 'none' };
   }
   const download = async () => { await osm.download(); await sat.download(); };
-  const redownload = async () => { await osm.redownload(); await sat.redownload(); };
-  // Los avisos de "no hay zona" salen iguales en ambas capas: se muestran una vez.
-  const notes = [...osm.notes, ...sat.notes.filter((n) => !osm.notes.includes(n)).map((n) => `Satélite · ${n}`)];
-  return { state, zones: osm.zones, notes, download, redownload, bounds: osm.bounds };
+  const redownload = async () => { await osm.redownload(); await sat.download(); };
+  const satNotes = sat.brigades.flatMap((b) => {
+    const x = sat.states[b.id];
+    if (!x) return [];
+    if (x.status === 'unavailable') return [`Satélite · ${b.name}: ${x.message}`];
+    if (x.status === 'complete' && x.outdated) return [`Satélite · ${b.name}: hay una versión nueva (cambió el KMZ o las estaciones). Toca Actualizar.`];
+    if (x.status === 'complete' && x.reduced) return [`Satélite · ${b.name}: zona grande, el detalle llega hasta el zoom ${x.maxZoom}.`];
+    return [];
+  });
+  return { state, zones: osm.zones, notes: [...osm.notes, ...satNotes], download, redownload, bounds: osm.bounds, satSources: sat.sources };
 }
 
 export const formatMb = (bytes: number) => `${(bytes / (1024 * 1024)).toLocaleString('es-PE', { maximumFractionDigits: 1 })} MB`;

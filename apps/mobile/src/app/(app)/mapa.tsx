@@ -9,7 +9,8 @@ import {
 } from '@toce/shared';
 import { api } from '../../lib/api';
 import { useField, type MapPhotoLocal } from '../../lib/field';
-import { BASEMAP_STYLE_URL, SATELLITE_STYLE_URL, formatMb, useWorkMaps, type BaseLayer } from '../../lib/basemap';
+import { BASEMAP_STYLE_URL, formatMb, useWorkMaps, type BaseLayer } from '../../lib/basemap';
+import { useSatelliteStyle } from '../../lib/satellitePack';
 import { ZONE_MAX_TILES, createZone, estimateZone, pauseZone, useOfflineZones } from '../../lib/offlineZones';
 import { bearingLabel, formatDistance, usePosition } from '../../lib/location';
 import { todayLima, usePackageIndex } from '../../lib/workPackage';
@@ -67,6 +68,8 @@ export default function MapScreen() {
   const project = (focus ? index?.projects.get(focus.projectId) : undefined) ?? index?.pkg.projects[0];
   // Mapa offline (OSM + satélite): un paquete por brigada del usuario (su KMZ o sus estaciones), no todo el proyecto.
   const basemap = useWorkMaps(project, index?.pkg.brigades ?? NO_BRIGADES);
+  // Satélite: imagen en línea + archivos offline de las brigadas + calles y nombres.
+  const satStyle = useSatelliteStyle(basemap.satSources, online);
   // Desde "Zonas descargadas": encuadra la zona elegida.
   useEffect(() => {
     const b = zoneParam?.split(',').map(Number);
@@ -226,7 +229,7 @@ export default function MapScreen() {
       <Map
         ref={mapRef}
         style={{ flex: 1 }}
-        mapStyle={base === 'sat' ? SATELLITE_STYLE_URL : BASEMAP_STYLE_URL}
+        mapStyle={base === 'sat' ? (satStyle as never) : BASEMAP_STYLE_URL}
         logo={false}
         attribution
         attributionPosition={{ bottom: 8, right: 8 }}
@@ -676,7 +679,7 @@ function OfflineRow({ basemap, online }: { basemap: ReturnType<typeof useWorkMap
   if (st.status === 'downloading') {
     return (
       <View style={[s.offline, { flexDirection: 'column', alignItems: 'stretch', gap: 6 }]}>
-        <Text style={s.offlineText}>Descargando mapa y satélite {what}… {st.percent}% · {formatMb(st.bytes)}{st.retrying ? ' · señal débil, reintentando' : ''}</Text>
+        <Text style={s.offlineText}>Descargando mapa y satélite {what}… {st.percent}% · {formatMb(st.bytes)}{st.detail ? ` · ${st.detail}` : ''}{st.retrying ? ' · señal débil, reintentando' : ''}</Text>
         <View style={s.track}><View style={[s.fill, { width: `${st.percent}%` }]} /></View>
       </View>
     );
