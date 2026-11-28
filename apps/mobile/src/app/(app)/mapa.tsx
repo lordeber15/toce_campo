@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Image } from 'expo-image';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { Camera, GeoJSONSource, Layer, Map, UserLocation, type CameraRef, type MapRef } from '@maplibre/maplibre-react-native';
 import {
@@ -87,7 +87,9 @@ export default function MapScreen() {
     () => layers.filter((l) => !hidden.has(l.brigadeId ? 'kmz-brigada' : 'kmz-general')),
     [layers, hidden],
   );
-  const kinds = useMemo(() => KIND_ORDER.filter((k) => drawn.some((l) => l.kind === k)), [drawn]);
+  // Tipos de capa del proyecto (de todas las capas, para que no desaparezcan del panel al ocultar un KMZ).
+  const kinds = useMemo(() => KIND_ORDER.filter((k) => layers.some((l) => l.kind === k)), [layers]);
+  const [layersOpen, setLayersOpen] = useState(false);
   const [picked, setPicked] = useState<Picked | null>(focus ? { kind: 'station', station: focus } : null);
 
   const todayIds = useMemo(() => new Set(index?.pkg.schedules.filter((s) => s.plannedDate === today).map((s) => s.stationId)), [index, today]);
@@ -217,6 +219,37 @@ export default function MapScreen() {
     return n;
   });
 
+  // Panel de capas: solo las que tienen datos.
+  const trackEm = new Set(tracks.map((x) => x.stationId)).size;
+  const layerGroups: LayerGroup[] = [
+    {
+      title: 'Trabajo de campo',
+      items: [
+        ...(areaData.features.length ? [{ key: 'poligono', label: 'Polígono de brigada', color: AREA_COLOR, dashed: true }] : []),
+        { key: 'estaciones', label: 'Estaciones', color: colors.primary, meta: `${stations.length} estacion${stations.length === 1 ? '' : 'es'}${todayIds.size ? ` · ${stations.filter((x) => todayIds.has(x.id)).length} hoy` : ''}` },
+        ...(tracks.length ? [{ key: 'tracking', label: 'Mi tracking', color: TRACK_COLOR, meta: `${trackEm} EM` }] : []),
+        ...(mine.length ? [{ key: 'mis-fotos', label: 'Mis fotos', color: PHOTO_COLOR.inside, meta: `${mine.length} foto${mine.length === 1 ? '' : 's'}` }] : []),
+        ...(supervised.length ? [{ key: 'fotos-equipo', label: 'Fotos de mis brigadas', color: '#1C7ED6', meta: online ? `${team.length} foto${team.length === 1 ? '' : 's'}` : 'Sin conexión' }] : []),
+      ],
+    },
+    {
+      title: 'Capas del proyecto',
+      items: kinds.map((k) => ({
+        key: k as string, label: KIND[k].label, color: KIND[k].color, dashed: k === 'superposicion',
+        meta: k === 'aid' ? 'Área de influencia directa' : k === 'aii' ? 'Área de influencia indirecta' : undefined,
+      })),
+    },
+    {
+      title: 'Archivos KMZ',
+      items: hasBrigadeKmz && hasGeneral ? [
+        { key: 'kmz-brigada', label: 'KMZ de mi brigada', color: AREA_COLOR },
+        { key: 'kmz-general', label: 'Capas generales', color: KIND.otro.color },
+      ] : [],
+    },
+  ].filter((g) => g.items.length > 0);
+  const layerKeys = layerGroups.flatMap((g) => g.items.map((i) => i.key));
+  const hiddenCount = layerKeys.filter((k) => hidden.has(k)).length;
+
   const initial = focus
     ? { center: [focus.lng, focus.lat] as [number, number], zoom: 14 }
     : project.bounds
@@ -225,7 +258,25 @@ export default function MapScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#E8ECE6' }}>
-      <Stack.Screen options={{ title: `Mapa · ${project.code}` }} />
+      <Stack.Screen
+        options={{
+          title: `Mapa · ${project.code}`,
+          headerRight: () => (
+            <Pressable
+              onPress={() => setLayersOpen(true)}
+              hitSlop={10}
+              style={s.layersBtn}
+              accessibilityRole="button"
+              accessibilityLabel={hiddenCount ? `Capas del mapa, ${hiddenCount} ocultas` : 'Capas del mapa'}
+            >
+              <LayersIcon color={colors.white} />
+              {hiddenCount > 0 && (
+                <View style={s.layersBadge}><Text style={s.layersBadgeText}>{hiddenCount}</Text></View>
+              )}
+            </Pressable>
+          ),
+        }}
+      />
       <Map
         ref={mapRef}
         style={{ flex: 1 }}
@@ -234,9 +285,9 @@ export default function MapScreen() {
         attribution
         attributionPosition={{ bottom: 8, right: 8 }}
         compass
-        compassPosition={{ top: 64, right: 12 }}
+        compassPosition={{ top: 12, right: 12 }}
         scaleBar
-        scaleBarPosition={{ top: 64, left: 12 }}
+        scaleBarPosition={{ top: 12, left: 12 }}
         onPress={(e) => setPicked({ kind: 'point', lat: e.nativeEvent.lngLat[1], lng: e.nativeEvent.lngLat[0] })}
       >
         <Camera ref={camera} initialViewState={initial} maxZoom={18} />
@@ -365,30 +416,6 @@ export default function MapScreen() {
         <UserLocation accuracy heading />
       </Map>
 
-      {/* Capas */}
-      <ScrollView horizontal style={s.chipsBar} contentContainerStyle={s.chips} showsHorizontalScrollIndicator={false}>
-        {[
-          ...(areaData.features.length ? [{ key: 'poligono', label: 'Polígono de brigada', color: AREA_COLOR }] : []),
-          ...(tracks.length ? [{ key: 'tracking', label: `Mi tracking (${new Set(tracks.map((x) => x.stationId)).size} EM)`, color: TRACK_COLOR }] : []),
-          ...(mine.length ? [{ key: 'mis-fotos', label: `Mis fotos (${mine.length})`, color: PHOTO_COLOR.inside }] : []),
-          ...(supervised.length ? [{ key: 'fotos-equipo', label: `Fotos de mis brigadas (${team.length})`, color: '#1C7ED6' }] : []),
-          ...(hasBrigadeKmz && hasGeneral ? [
-            { key: 'kmz-brigada', label: 'KMZ de mi brigada', color: AREA_COLOR },
-            { key: 'kmz-general', label: 'Capas generales', color: KIND.otro.color },
-          ] : []),
-          ...kinds.map((k) => ({ key: k as string, label: KIND[k].label, color: KIND[k].color })),
-          { key: 'estaciones', label: 'Estaciones', color: colors.primary },
-        ].map((c) => {
-          const on = !hidden.has(c.key);
-          return (
-            <Pressable key={c.key} onPress={() => toggle(c.key)} style={[s.chip, !on && s.chipOff]} accessibilityRole="switch" accessibilityState={{ checked: on }}>
-              <View style={[s.swatch, { backgroundColor: on ? c.color : 'transparent', borderColor: c.color }]} />
-              <Text style={[s.chipText, !on && { color: colors.text2 }]}>{c.label}</Text>
-            </Pressable>
-          );
-        })}
-      </ScrollView>
-
       {/* Botones */}
       <View style={s.fabs}>
         <Pressable
@@ -402,15 +429,6 @@ export default function MapScreen() {
         </Pressable>
         <Pressable style={s.fab} onPress={fit} accessibilityRole="button" accessibilityLabel="Ver toda mi zona de trabajo">
           <Text style={s.fabText}>⤢</Text>
-        </Pressable>
-        <Pressable
-          style={[s.fab, base === 'sat' && { backgroundColor: colors.primary }]}
-          onPress={() => setBase(base === 'sat' ? 'osm' : 'sat')}
-          accessibilityRole="switch"
-          accessibilityState={{ checked: base === 'sat' }}
-          accessibilityLabel="Imagen satelital"
-        >
-          <Text style={[s.fabSmall, base === 'sat' && { color: colors.white }]}>SAT</Text>
         </Pressable>
         <Pressable
           style={s.fab}
@@ -471,7 +489,135 @@ export default function MapScreen() {
       </View>
 
       {toDownload && <DownloadDialog bounds={toDownload} online={online} onClose={() => setToDownload(null)} />}
+      <LayersSheet
+        visible={layersOpen}
+        onClose={() => setLayersOpen(false)}
+        base={base}
+        onBase={setBase}
+        groups={layerGroups}
+        hidden={hidden}
+        onToggle={toggle}
+        onShowAll={() => setHidden(new Set())}
+      />
     </View>
+  );
+}
+
+type LayerItem = { key: string; label: string; color: string; meta?: string; dashed?: boolean };
+type LayerGroup = { title: string; items: LayerItem[] };
+
+/** Icono de capas apiladas (tres rombos). */
+function LayersIcon({ color }: { color: string }) {
+  return (
+    <View style={{ width: 24, height: 22 }}>
+      {[10, 5, 0].map((top, i) => (
+        <View
+          key={top}
+          style={{
+            position: 'absolute', left: 5, top, width: 14, height: 14, borderWidth: 1.8, borderColor: color,
+            borderRadius: 2, backgroundColor: i === 2 ? colors.primary : 'transparent',
+            transform: [{ scaleY: 0.55 }, { rotate: '45deg' }],
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
+const BASES: { id: BaseLayer; label: string; thumb: string[] }[] = [
+  { id: 'osm', label: 'Mapa', thumb: ['#EEF0E8', '#DCE8D2', '#F5D9A6'] },
+  { id: 'sat', label: 'Satélite', thumb: ['#6E6550', '#9C8F73', '#4F6B3E'] },
+];
+
+/** Panel inferior para elegir el mapa base y mostrar u ocultar capas. */
+function LayersSheet({ visible, onClose, base, onBase, groups, hidden, onToggle, onShowAll }: {
+  visible: boolean; onClose: () => void; base: BaseLayer; onBase: (b: BaseLayer) => void;
+  groups: LayerGroup[]; hidden: Set<string>; onToggle: (k: string) => void; onShowAll: () => void;
+}) {
+  const total = groups.reduce((n, g) => n + g.items.length, 0);
+  const off = groups.reduce((n, g) => n + g.items.filter((i) => hidden.has(i.key)).length, 0);
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <View style={s.lsWrap}>
+        <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityRole="button" accessibilityLabel="Cerrar panel de capas" />
+        <View style={s.lsSheet} accessibilityViewIsModal>
+          <View style={s.lsHandle} />
+          <View style={[s.row, { paddingHorizontal: 18, paddingBottom: 10 }]}>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={s.lsTitle}>Capas del mapa</Text>
+              <Text style={s.small}>{total - off} de {total} capas visibles</Text>
+            </View>
+            {off > 0 && (
+              <Pressable onPress={onShowAll} hitSlop={6} style={s.lsPill} accessibilityRole="button">
+                <Text style={s.linkText}>Mostrar todo</Text>
+              </Pressable>
+            )}
+            <Pressable onPress={onClose} hitSlop={8} style={s.lsClose} accessibilityRole="button" accessibilityLabel="Cerrar">
+              <Text style={s.close}>✕</Text>
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={{ paddingHorizontal: 18, paddingBottom: 34, gap: 16 }}>
+            <View style={{ gap: 8 }}>
+              <Text style={s.lsGroup}>Mapa base</Text>
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                {BASES.map((b) => {
+                  const sel = base === b.id;
+                  return (
+                    <Pressable
+                      key={b.id}
+                      onPress={() => onBase(b.id)}
+                      style={[s.lsBase, sel && { borderColor: colors.primary }]}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected: sel }}
+                    >
+                      <View style={s.lsThumb}>
+                        {b.thumb.map((c) => <View key={c} style={{ flex: 1, backgroundColor: c }} />)}
+                      </View>
+                      <Text style={[s.h3, { fontSize: 14 }, sel && { color: colors.primary }]}>{b.label}</Text>
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+            {groups.map((g) => (
+              <View key={g.title} style={{ gap: 8 }}>
+                <Text style={s.lsGroup}>{g.title}</Text>
+                <View style={s.lsCard}>
+                  {g.items.map((it, i) => {
+                    const on = !hidden.has(it.key);
+                    return (
+                      <Pressable
+                        key={it.key}
+                        onPress={() => onToggle(it.key)}
+                        style={[s.lsRow, i > 0 && s.lsRowSep]}
+                        accessibilityRole="switch"
+                        accessibilityState={{ checked: on }}
+                        accessibilityLabel={it.label}
+                      >
+                        <View style={[s.lsSwatch, { borderColor: it.color, borderStyle: it.dashed ? 'dashed' : 'solid', backgroundColor: on ? `${it.color}40` : 'transparent' }]} />
+                        <View style={{ flex: 1, gap: 1 }}>
+                          <Text style={[s.lsLabel, !on && { color: colors.text2 }]}>{it.label}</Text>
+                          {!!it.meta && <Text style={s.hint}>{it.meta}</Text>}
+                        </View>
+                        <Switch
+                          value={on}
+                          onValueChange={() => onToggle(it.key)}
+                          trackColor={{ true: colors.primary, false: '#C9D1C6' }}
+                          thumbColor={colors.white}
+                          ios_backgroundColor="#C9D1C6"
+                          importantForAccessibility="no"
+                          accessibilityElementsHidden
+                        />
+                      </Pressable>
+                    );
+                  })}
+                </View>
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+      </View>
+    </Modal>
   );
 }
 
@@ -706,16 +852,26 @@ function OfflineRow({ basemap, online }: { basemap: ReturnType<typeof useWorkMap
 const s = StyleSheet.create({
   center: { alignItems: 'center', justifyContent: 'center', padding: 24 },
   muted: { color: colors.text2, textAlign: 'center' },
-  chipsBar: { position: 'absolute', top: 10, left: 0, right: 0, flexGrow: 0 },
-  chips: { paddingHorizontal: 12, gap: 8 },
-  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,255,255,0.96)', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 7, borderWidth: 1, borderColor: colors.border },
-  chipOff: { backgroundColor: 'rgba(255,255,255,0.75)' },
-  swatch: { width: 12, height: 12, borderRadius: 3, borderWidth: 2 },
-  chipText: { color: colors.text, fontSize: 13, fontWeight: '600' },
-  fabs: { position: 'absolute', right: 12, top: 110, gap: 10 },
+  layersBtn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(255,255,255,0.16)' },
+  layersBadge: { position: 'absolute', top: -3, right: -3, minWidth: 18, height: 18, paddingHorizontal: 4, borderRadius: 9, backgroundColor: AREA_COLOR, borderWidth: 2, borderColor: colors.primary, alignItems: 'center', justifyContent: 'center' },
+  layersBadgeText: { color: colors.white, fontSize: 10, fontWeight: '800' },
+  lsWrap: { flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(10,20,14,0.35)' },
+  lsSheet: { maxHeight: '80%', backgroundColor: colors.surface, borderTopLeftRadius: 20, borderTopRightRadius: 20, elevation: 12 },
+  lsHandle: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: colors.border, marginTop: 8, marginBottom: 10 },
+  lsTitle: { fontSize: 18, fontWeight: '800', color: colors.text },
+  lsPill: { borderWidth: 1, borderColor: colors.border, borderRadius: 17, paddingHorizontal: 12, paddingVertical: 7 },
+  lsClose: { width: 34, height: 34, borderRadius: 17, backgroundColor: '#EEF1EC', alignItems: 'center', justifyContent: 'center' },
+  lsGroup: { fontSize: 12, fontWeight: '800', letterSpacing: 0.6, textTransform: 'uppercase', color: colors.text2 },
+  lsBase: { flex: 1, gap: 6, padding: 6, paddingBottom: 8, borderRadius: 14, borderWidth: 2, borderColor: colors.border, alignItems: 'center' },
+  lsThumb: { alignSelf: 'stretch', height: 56, borderRadius: 9, overflow: 'hidden', flexDirection: 'row' },
+  lsCard: { borderWidth: 1, borderColor: colors.border, borderRadius: 14, overflow: 'hidden' },
+  lsRow: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: 12, paddingHorizontal: 14, paddingVertical: 8, backgroundColor: colors.surface },
+  lsRowSep: { borderTopWidth: 1, borderTopColor: '#EEF1EC' },
+  lsSwatch: { width: 18, height: 18, borderRadius: 5, borderWidth: 2 },
+  lsLabel: { fontSize: 15, fontWeight: '600', color: colors.text },
+  fabs: { position: 'absolute', right: 12, top: 64, gap: 10 },
   fab: { width: 44, height: 44, borderRadius: 22, backgroundColor: '#fff', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.border, elevation: 3 },
   fabText: { fontSize: 22, color: colors.primary, fontWeight: '700' },
-  fabSmall: { fontSize: 12, color: colors.primary, fontWeight: '800' },
   backdrop: { ...StyleSheet.absoluteFill, backgroundColor: 'rgba(0,0,0,0.35)', justifyContent: 'center', padding: 24 },
   dialog: { backgroundColor: colors.surface, borderRadius: radius + 2, padding: 18, gap: 10 },
   input: { borderWidth: 1, borderColor: colors.border, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, color: colors.text, fontSize: 15 },
