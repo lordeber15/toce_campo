@@ -4,7 +4,9 @@ import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { ADMIN_ROLES, WEB_ROLES, brigadeSchema } from '@toce/shared';
 import { schema } from '../db/index.js';
 import { audit } from '../lib/audit.js';
+import { z } from 'zod';
 import { badRequest, conflict, idParam, isUniqueViolation, notFound, projectParam } from '../lib/http.js';
+import { setMethodUnits } from '../lib/stationMethods.js';
 
 const { brigades, brigadeMembers, users } = schema;
 type Tx = Parameters<Parameters<typeof import('../db/index.js').db.transaction>[0]>[0];
@@ -116,6 +118,42 @@ const brigadesRoutes: FastifyPluginAsync = async (app) => {
       if (isUniqueViolation(e)) throw conflict('Ya existe una brigada con ese nombre o código en el proyecto');
       throw e;
     }
+  });
+
+  // ---------- Unidades por método en la brigada ----------
+  // Lo que se cambia aquí solo afecta a las estaciones de esta brigada; en Métodos se aplica a todas.
+  const brigadeScope = (brigadeId: string) => sql`(sm.brigade_id = ${brigadeId} OR (sm.brigade_id IS NULL AND EXISTS (
+    SELECT 1 FROM schedules sc WHERE sc.station_id = sm.station_id AND sc.brigade_id = ${brigadeId})))`;
+
+  r.get('/brigades/:id/methods', { onRequest: read, schema: { params: idParam } }, async (req) => {
+    const rows = await app.db.execute(sql`
+      WITH sms AS (
+        SELECT sm.id, sm.method_id, sm.units_required FROM station_methods sm
+        JOIN stations s ON s.id = sm.station_id AND s.deleted_at IS NULL
+        WHERE ${brigadeScope(req.params.id)})
+      SELECT m.id, m.code, m.name, sp.name AS "specialtyName", m.default_units_required AS "defaultUnits",
+        count(*)::int AS stations, min(sms.units_required)::int AS "minUnits", max(sms.units_required)::int AS "maxUnits",
+        (SELECT count(*)::int FROM sampling_units su JOIN sms x ON x.id = su.station_method_id
+          WHERE x.method_id = m.id AND su.retired_at IS NULL AND (su.status <> 'pendiente'
+            OR EXISTS (SELECT 1 FROM executions e WHERE e.sampling_unit_id = su.id))) AS "unitsWithWork"
+      FROM sms JOIN methods m ON m.id = sms.method_id JOIN specialties sp ON sp.id = m.specialty_id
+      WHERE NOT m.is_open_ended
+      GROUP BY m.id, m.code, m.name, sp.name, sp.sort_order, m.sort_order, m.default_units_required
+      ORDER BY sp.sort_order, m.sort_order, m.code`);
+    return rows.rows;
+  });
+
+  r.put('/brigades/:id/methods/:methodId/units', {
+    onRequest: write,
+    schema: { params: z.object({ id: z.string().uuid(), methodId: z.string().uuid() }), body: z.object({ units: z.number().int().min(0).max(500) }) },
+  }, async (req) => {
+    return app.db.transaction(async (tx) => {
+      const [b] = await tx.select({ id: brigades.id }).from(brigades).where(eq(brigades.id, req.params.id));
+      if (!b) throw notFound('Brigada');
+      const res = await setMethodUnits(tx, req.params.methodId, req.body.units, { brigadeId: b.id });
+      await audit(req, 'brigade', b.id, 'update', { after: { methodId: req.params.methodId, units: req.body.units, ...res } }, tx);
+      return res;
+    });
   });
 
   /** Usuarios disponibles para armar brigadas (activos, no asignados a otra brigada del proyecto). */

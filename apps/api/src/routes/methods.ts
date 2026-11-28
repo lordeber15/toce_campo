@@ -7,6 +7,7 @@ import { schema } from '../db/index.js';
 import { audit } from '../lib/audit.js';
 import { badRequest, conflict, idParam, isUniqueViolation, notFound } from '../lib/http.js';
 import { specialtyCode } from '../lib/templateImport.js';
+import { setMethodUnits } from '../lib/stationMethods.js';
 
 const { methods, specialties, specialtyAccess } = schema;
 
@@ -116,9 +117,16 @@ const methodsRoutes: FastifyPluginAsync = async (app) => {
   r.patch('/methods/:id', { onRequest: write, schema: { params: idParam, body: methodUpdateSchema } }, async (req) => {
     const [cur] = await app.db.select().from(methods).where(eq(methods.id, req.params.id));
     if (!cur) throw notFound('Método');
-    const [m] = await app.db.update(methods).set(req.body).where(eq(methods.id, cur.id)).returning();
-    await audit(req, 'method', cur.id, 'update', { before: cur, after: req.body });
-    return m;
+    return app.db.transaction(async (tx) => {
+      const [m] = await tx.update(methods).set(req.body).where(eq(methods.id, cur.id)).returning();
+      // Cambio de unidades desde Métodos: se aplica a todas las estaciones que lo tienen (sin borrar nada).
+      const units = req.body.defaultUnitsRequired;
+      const applied = units !== undefined && units !== cur.defaultUnitsRequired && !m!.isOpenEnded
+        ? await setMethodUnits(tx, cur.id, units)
+        : null;
+      await audit(req, 'method', cur.id, 'update', { before: cur, after: req.body, ...(applied && { unitsApplied: applied }) }, tx);
+      return { ...m!, unitsApplied: applied };
+    });
   });
 };
 export default methodsRoutes;

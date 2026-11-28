@@ -133,7 +133,7 @@ export default function CameraScreen() {
       const clientId = Crypto.randomUUID();
       // Consulta: la foto se envía como una respuesta propia (se guarda y sube aunque no haya señal).
       const ownerId = inquiry ? Crypto.randomUUID() : exec;
-      const photo = await processPhoto(pic.uri, { width: pic.width, height: pic.height }, stamp, ownerId, clientId, { name, bearing, metadata: { policy: 'TOCE_PHOTO_12MP_V1', takenAt: takenAt.toISOString(), stationCode: station?.code ?? null, unitCode: execution?.unitCode ?? null, methodName: method?.name ?? null, vegetationUnit: station?.vegetationUnit ?? null, latitude: gps?.lat ?? null, longitude: gps?.lng ?? null, altitude: gps?.altitude ?? null, altitudeReference: 'WGS84_ellipsoid', bearingReference: 'magnetic_north' } });
+      const photo = await processPhoto(pic.uri, { width: pic.width, height: pic.height }, stamp, ownerId, clientId, { name, bearing, exifOrientation: Number(pic.exif?.Orientation) || null, metadata: { policy: 'TOCE_PHOTO_12MP_V1', takenAt: takenAt.toISOString(), stationCode: station?.code ?? null, unitCode: execution?.unitCode ?? null, methodName: method?.name ?? null, vegetationUnit: station?.vegetationUnit ?? null, latitude: gps?.lat ?? null, longitude: gps?.lng ?? null, altitude: gps?.altitude ?? null, altitudeReference: 'WGS84_ellipsoid', bearingReference: 'magnetic_north' } });
       if (inquiry) await field.sendInquiryReply(inquiry.id, 'Foto', ownerId);
       await field.addAttachment(
         {

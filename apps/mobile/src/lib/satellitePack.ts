@@ -132,12 +132,12 @@ export function useSatellitePacks(project: WpProject | undefined, brigades: WpBr
       if ((part.size ?? 0) !== s.bytes) { part.delete(); throw new Error('La descarga del satélite quedó incompleta. Vuelve a intentarlo.'); }
       const final = packFile(b.id);
       if (final.exists) final.delete();
-      part.move(final);
+      await part.move(final);
       const meta: LocalMeta = { version: s.version, bytes: s.bytes, maxZoom: s.maxZoom, reduced: s.reduced, downloadedAt: new Date().toISOString() };
       const m = metaFile(b.id);
       if (m.exists) m.delete();
       m.create();
-      m.write(JSON.stringify(meta));
+      await m.write(JSON.stringify(meta));
       set(b.id, { status: 'complete', bytes: meta.bytes, downloadedAt: meta.downloadedAt, maxZoom: meta.maxZoom, reduced: meta.reduced, outdated: false });
       setRev((r) => r + 1);
       return;
@@ -198,12 +198,12 @@ export function useSatelliteStyle(sources: { id: string; url: string; maxZoom: n
     let alive = true;
     fetch(SATELLITE_STYLE_URL)
       .then((r) => (r.ok ? r.text() : Promise.reject(new Error(String(r.status)))))
-      .then((text) => {
+      .then(async (text) => {
         const s = JSON.parse(text) as Style;
         const f = styleFile();
         if (f.exists) f.delete();
         f.create();
-        f.write(text);
+        await f.write(text);
         if (alive) setBase(s);
       })
       .catch(() => undefined);

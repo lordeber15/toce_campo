@@ -246,6 +246,11 @@ export const samplingUnits = pgTable(
     /** Para unidades abiertas creadas en campo (RO): id generado en el cliente. */
     clientId: uuid('client_id'),
     createdById: uuid('created_by_id').references(() => users.id),
+    /**
+     * Fuera de plan: se bajaron las unidades del método. No se borra (un teléfono pudo trabajarla sin señal):
+     * no va en el paquete ni en los conteos; se reactiva si llega trabajo de campo o si se vuelve a subir la cantidad.
+     */
+    retiredAt: timestamp('retired_at', { withTimezone: true }),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

@@ -90,6 +90,13 @@ export function WorkPackageProvider({ children }: { children: ReactNode }) {
             for(const m of previous.methods)await db.runAsync(
               "UPDATE executions SET form_data=json_set(form_data,'$.schemaSnapshot',json(?)) WHERE user_id=? AND method_id=? AND json_extract(form_data,'$.schemaSnapshot') IS NULL",
               JSON.stringify(m.formSchema),userId,m.id);
+            // Unidades que se dejaron fuera de plan en la web pero que este teléfono ya trabajó: se conservan
+            // hasta sincronizar (el servidor las reactiva al recibir el trabajo y vuelven en el siguiente paquete).
+            const worked = new Set((await db.getAllAsync<{ unit_id: string }>(
+              'SELECT DISTINCT unit_id FROM executions WHERE user_id = ? AND unit_id IS NOT NULL', userId)).map((r) => r.unit_id));
+            const inNew = new Set(res.units.map((u) => u.id));
+            const keep = previous.units.filter((u) => worked.has(u.id) && !inNew.has(u.id) && res.stationMethods.some((sm) => sm.id === u.stationMethodId));
+            if (keep.length) res.units = [...res.units, ...keep];
           }
           await db.runAsync(
             `INSERT INTO work_package (user_id, version, generated_at, downloaded_at, data) VALUES (?, ?, ?, ?, ?)

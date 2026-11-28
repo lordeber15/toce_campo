@@ -21,7 +21,7 @@ export type ProcessedPhoto = {
 export async function processPhoto(
   captureUri: string, upright: { width: number; height: number }, stamp: string[],
   executionClientId: string, clientId: string,
-  options: { name?: string; bearing?: number | null; metadata?: Record<string, unknown> } = {},
+  options: { name?: string; bearing?: number | null; metadata?: Record<string, unknown>; exifOrientation?: number | null } = {},
 ): Promise<ProcessedPhoto> {
   const dir = fieldDir(executionClientId);
   const stem = `${fileStem(options.name ?? 'Foto')}_${clientId}`;
@@ -32,28 +32,37 @@ export async function processPhoto(
   const img = Skia.Image.MakeImageFromEncoded(data);
   if (!img) throw new Error('No se pudo leer la foto');
   const iw = img.width(), ih = img.height();
-  // Skia aplica la orientación EXIF al decodificar. No adivinar giros de 90/270 grados.
+  // Algunos Android reportan width/height girados o dejan el giro solo en el EXIF.
+  // Si las proporciones vienen invertidas, se gira según el EXIF (6 = 90°, 8 = 270°);
+  // sin EXIF de giro, la imagen decodificada ya es la correcta.
   const captureRatio = upright.width / upright.height;
-  if (Math.abs(iw / ih - captureRatio) > 0.02) {
-    img.dispose(); data.dispose();
-    throw new Error('La orientación de la foto no coincide con la cámara. Vuelve a tomarla.');
-  }
-  const { width: W, height: H } = boundedDimensions(iw, ih);
+  const swapped = Math.abs(iw / ih - captureRatio) > 0.02 && Math.abs(ih / iw - captureRatio) <= 0.02;
+  const rotation = swapped && options.exifOrientation === 6 ? 90 : swapped && options.exifOrientation === 8 ? 270 : 0;
+  const rw = rotation ? ih : iw, rh = rotation ? iw : ih;
+  const { width: W, height: H } = boundedDimensions(rw, rh);
   const surface = Skia.Surface.MakeOffscreen(W, H);
   if (!surface) { img.dispose(); data.dispose(); throw new Error('No hay memoria suficiente para procesar la foto. Intenta de nuevo.'); }
   try {
     const canvas = surface.getCanvas(), paint = Skia.Paint();
     paint.setAntiAlias(true);
-    canvas.drawImageRectCubic(img, Skia.XYWHRect(0, 0, iw, ih), Skia.XYWHRect(0, 0, W, H), 1/3, 1/3, paint);
-    if (W === iw && H === ih) {
+    if (rotation) {
+      canvas.save();
+      if (rotation === 90) { canvas.translate(W, 0); canvas.rotate(90, 0, 0); }
+      else { canvas.translate(0, H); canvas.rotate(-90, 0, 0); }
+      canvas.drawImageRectCubic(img, Skia.XYWHRect(0, 0, iw, ih), Skia.XYWHRect(0, 0, H, W), 1/3, 1/3, paint);
+      canvas.restore();
+    } else {
+      canvas.drawImageRectCubic(img, Skia.XYWHRect(0, 0, iw, ih), Skia.XYWHRect(0, 0, W, H), 1/3, 1/3, paint);
+    }
+    if (!rotation && W === iw && H === ih) {
       // Conserva exactamente el JPEG de cámara y sus EXIF cuando ya cumple el límite.
-      new File(captureUri).copy(original);
+      await new File(captureUri).copy(original);
     } else {
       surface.flush();
       const rawSnapshot = surface.makeImageSnapshot();
       const unlabelled = rawSnapshot.makeNonTextureImage();
       if (!unlabelled) { rawSnapshot.dispose(); throw new Error("No se pudo preparar la foto sin rótulo"); }
-      try { original.write(jpegWithPhotoMetadata(unlabelled.encodeToBytes(ImageFormat.JPEG, PHOTO_JPEG_QUALITY), { ...metadata, width: W, height: H })); }
+      try { await original.write(jpegWithPhotoMetadata(unlabelled.encodeToBytes(ImageFormat.JPEG, PHOTO_JPEG_QUALITY), { ...metadata, width: W, height: H })); }
       finally { unlabelled.dispose(); if (rawSnapshot !== unlabelled) rawSnapshot.dispose(); }
     }
     drawStamp(canvas, W, H, stamp, options.bearing);
@@ -61,7 +70,7 @@ export async function processPhoto(
     const labelledSnapshot = surface.makeImageSnapshot();
     const snapshot = labelledSnapshot.makeNonTextureImage();
     if (!snapshot) { labelledSnapshot.dispose(); throw new Error("No se pudo preparar la foto rotulada"); }
-    try { labelled.write(jpegWithPhotoMetadata(snapshot.encodeToBytes(ImageFormat.JPEG, PHOTO_JPEG_QUALITY), { ...metadata, width: W, height: H })); }
+    try { await labelled.write(jpegWithPhotoMetadata(snapshot.encodeToBytes(ImageFormat.JPEG, PHOTO_JPEG_QUALITY), { ...metadata, width: W, height: H })); }
     finally { snapshot.dispose(); if (labelledSnapshot !== snapshot) labelledSnapshot.dispose(); }
     if (!labelled.size || !original.size) throw new Error('No se pudo escribir la foto completa');
     return { originalPath: original.uri, compressedPath: labelled.uri, width: W, height: H,

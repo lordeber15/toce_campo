@@ -93,7 +93,7 @@ export async function computeTracking(projectId: string, opts: { today?: string;
     JOIN brigades b ON b.id = g.brigade_id ${bFilter}
     JOIN station_methods sm ON sm.station_id = g.station_id AND (sm.brigade_id IS NULL OR sm.brigade_id = g.brigade_id)
     JOIN methods m ON m.id = sm.method_id AND (b.specialty_id IS NULL OR m.specialty_id = b.specialty_id)
-    LEFT JOIN sampling_units su ON su.station_method_id = sm.id
+    LEFT JOIN sampling_units su ON su.station_method_id = sm.id AND su.retired_at IS NULL
     GROUP BY g.brigade_id, g.station_id, m.id, m.code, m.is_open_ended, m.sort_order, sm.units_required
     ORDER BY m.sort_order, m.code`)).rows as MethodRow[];
 

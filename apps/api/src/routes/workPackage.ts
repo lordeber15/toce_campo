@@ -203,7 +203,7 @@ const workPackageRoutes: FastifyPluginAsync = async (app) => {
       const units: WpUnit[] = smIds.length
         ? ((await db.execute(sql`
             SELECT id, station_method_id AS "stationMethodId", station_id AS "stationId", method_id AS "methodId", seq, code, status
-            FROM sampling_units WHERE station_method_id IN (${list(smIds)}) ORDER BY station_id, method_id, seq, id`)).rows as WpUnit[])
+            FROM sampling_units WHERE station_method_id IN (${list(smIds)}) AND retired_at IS NULL ORDER BY station_id, method_id, seq, id`)).rows as WpUnit[])
         : [];
 
       const specialtyIds = [...new Set(stationMethods.map((sm) => sm.specialtyId))];

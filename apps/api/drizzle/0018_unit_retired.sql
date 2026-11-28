@@ -1,0 +1,1 @@
+ALTER TABLE "sampling_units" ADD COLUMN "retired_at" timestamp with time zone;

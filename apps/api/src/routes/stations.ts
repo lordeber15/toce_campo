@@ -29,7 +29,7 @@ const stationsRoutes: FastifyPluginAsync = async (app) => {
           ORDER BY sp.sort_order, m.sort_order)
           FROM station_methods sm JOIN methods m ON m.id = sm.method_id JOIN specialties sp ON sp.id = m.specialty_id
           WHERE sm.station_id = s.id), '[]') AS methods,
-        (SELECT count(*)::int FROM sampling_units u WHERE u.station_id = s.id) AS units,
+        (SELECT count(*)::int FROM sampling_units u WHERE u.station_id = s.id AND u.retired_at IS NULL) AS units,
         (SELECT count(*)::int FROM schedules sc WHERE sc.station_id = s.id) AS schedules
       FROM stations s WHERE s.project_id = ${req.params.projectId} AND s.deleted_at IS NULL
       ORDER BY s.code`);
@@ -40,7 +40,7 @@ const stationsRoutes: FastifyPluginAsync = async (app) => {
     const rows = await app.db.execute(sql`
       SELECT u.id, u.code, u.seq, u.status, m.code AS "methodCode", m.name AS "methodName", sp.code AS "specialtyCode"
       FROM sampling_units u JOIN methods m ON m.id = u.method_id JOIN specialties sp ON sp.id = m.specialty_id
-      WHERE u.station_id = ${req.params.id} ORDER BY sp.sort_order, m.sort_order, u.seq`);
+      WHERE u.station_id = ${req.params.id} AND u.retired_at IS NULL ORDER BY sp.sort_order, m.sort_order, u.seq`);
     return rows.rows;
   });
 

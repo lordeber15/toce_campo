@@ -122,6 +122,8 @@ const fieldRoutes: FastifyPluginAsync = async (app) => {
             .rows[0] as { id: string; code: string } | undefined;
           if (!u) throw notFound('Unidad de muestreo');
           unit = u;
+          // Trabajo de una unidad que se dejó fuera de plan mientras el teléfono no tenía señal: se reactiva, no se pierde.
+          await tx.execute(sql`UPDATE sampling_units SET retired_at = NULL, updated_at = now() WHERE id = ${u.id} AND retired_at IS NOT NULL`);
         }
 
         const geom = e.startLat != null && e.startLng != null ? sql`ST_SetSRID(ST_MakePoint(${e.startLng}, ${e.startLat}), 4326)` : sql`NULL`;

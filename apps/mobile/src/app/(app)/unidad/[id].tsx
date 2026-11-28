@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
-import { formatUtm, latLngToUtm, type FieldRecord, type WpMethod } from '@toce/shared';
+import { formatUtm, latLngToUtm, type FieldRecord, type PhotoSlot, type WpMethod } from '@toce/shared';
 import { useAttachments, useField, type LocalAttachment, type LocalExecution } from '../../../lib/field';
 import { usePosition } from '../../../lib/location';
 import { todayLima, usePackageIndex } from '../../../lib/workPackage';
@@ -28,6 +28,7 @@ export default function UnitScreen() {
 
   const [files, loadFiles] = useAttachments(execution?.clientId);
 
+  const slots = useMemo(() => (method ? unitSlots(method) : []), [method]);
   const required = useMemo(() => (method ? requiredPhotos(method) : []), [method]);
   const extras = files.filter((f) => f.kind === 'foto' && f.slotKey === 'adicional');
   const removeExtra = (f: LocalAttachment) => {
@@ -169,11 +170,11 @@ export default function UnitScreen() {
             </View>
           <View style={s.card}>
               <Text style={s.h2}>Registro fotográfico</Text>
-              {method.photoSlots.length > 0 && (
+              {slots.length > 0 && (
                 <>
-                  <Text style={s.small}>Fotos de la unidad de muestreo ({method.photoSlots.length}).</Text>
+                  <Text style={s.small}>Fotos de la unidad de muestreo ({slots.length}).</Text>
                   <View style={s.grid}>
-                    {method.photoSlots.map((slot, i) => (
+                    {slots.map((slot, i) => (
                       <PhotoTile
                         key={slot.key}
                         label={slot.label}
@@ -187,7 +188,7 @@ export default function UnitScreen() {
                   </View>
                 </>
               )}
-              {(method.photoSlots.length > 0 || method.methodPhotoInstructions || method.methodPhotoRequired) && (
+              {(slots.length > 0 || method.methodPhotoInstructions || method.methodPhotoRequired) && (
               <View style={s.methodPhoto}>
                 <Text style={s.h3}>Foto del método{method.methodPhotoRequired ? ' *' : ''}</Text>
                 <Text style={s.small}>
@@ -290,9 +291,22 @@ export default function UnitScreen() {
   );
 }
 
+/**
+ * Fotos de la unidad. Si el método tiene "Fotos por unidad" (web), es la cantidad exacta y todas son obligatorias:
+ * se usan las primeras orientaciones configuradas y, si faltan, "Foto 1..N". Sin ese dato: las orientaciones tal cual.
+ */
+function unitSlots(m: WpMethod): PhotoSlot[] {
+  const n = m.photosPerUnit;
+  if (n == null) return m.photoSlots;
+  return Array.from({ length: n }, (_, i) => {
+    const s = m.photoSlots[i];
+    return s ? { ...s, required: true } : { key: `foto_${i + 1}`, label: `Foto ${i + 1}`, required: true };
+  });
+}
+
 type RequiredPhoto = { kind: 'foto' | 'foto_metodo'; key: string; label: string };
 function requiredPhotos(m: WpMethod): RequiredPhoto[] {
-  const list: RequiredPhoto[] = m.photoSlots.filter((p) => p.required).map((p) => ({ kind: 'foto', key: p.key, label: p.label }));
+  const list: RequiredPhoto[] = unitSlots(m).filter((p) => p.required).map((p) => ({ kind: 'foto', key: p.key, label: p.label }));
   if (m.methodPhotoRequired) list.push({ kind: 'foto_metodo', key: 'metodo', label: 'Foto del método' });
   return list;
 }

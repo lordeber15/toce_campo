@@ -97,8 +97,24 @@ function MethodEditor({ method, readOnly }: { method: Method; readOnly: boolean 
           scheduleText: m.scheduleText?.trim() || null, guideline: m.guideline?.trim() || null,
         }),
       }),
-    onSuccess: () => { setDirty(false); setSaved(true); qc.invalidateQueries({ queryKey: ['methods-admin'] }); qc.invalidateQueries({ queryKey: ['methods'] }); },
+    onSuccess: (res) => {
+      setApplied((res as { unitsApplied?: UnitsApplied | null }).unitsApplied ?? null);
+      setDirty(false); setSaved(true);
+      qc.invalidateQueries({ queryKey: ['methods-admin'] }); qc.invalidateQueries({ queryKey: ['methods'] });
+    },
   });
+  type UnitsApplied = { stations: number; warnings: string[] };
+  const [applied, setApplied] = useState<UnitsApplied | null>(null);
+  const unitsChanged = !m.isOpenEnded && m.defaultUnitsRequired !== method.defaultUnitsRequired;
+  const onSave = () => {
+    // Desde Métodos el cambio de unidades se aplica a todas las estaciones que tienen el método.
+    if (unitsChanged && m.stationCount > 0 && !confirm(
+      `Se pondrán ${m.defaultUnitsRequired} unidades de ${m.code} en las ${m.stationCount} estaciones que lo tienen (todas las brigadas).\n\n`
+      + 'No se borra nada: las unidades sobrantes quedan fuera de plan y las que ya tienen trabajo de campo se conservan.\n'
+      + 'Para cambiar solo una brigada, hazlo desde Brigadas.',
+    )) return;
+    save.mutate();
+  };
 
   const fields = m.formSchema.fields;
   const setFields = (fs: FormField[]) => upd({ formSchema: { fields: fs } });
@@ -123,9 +139,18 @@ function MethodEditor({ method, readOnly }: { method: Method; readOnly: boolean 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
         <h2 style={{ flex: 1 }}>{m.code} · {m.name}</h2>
         <label className="hint" style={{ display: 'flex', gap: 6, alignItems: 'center' }}><input type="checkbox" checked={m.isActive} onChange={(e) => upd({ isActive: e.target.checked })} /> Activo</label>
-        {!readOnly && <button type="button" className="btn btn-primary" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>{save.isPending ? 'Guardando…' : 'Guardar cambios'}</button>}
+        {!readOnly && <button type="button" className="btn btn-primary" disabled={!dirty || save.isPending} onClick={onSave}>{save.isPending ? 'Guardando…' : 'Guardar cambios'}</button>}
       </div>
-      {saved && <div className="ok-text">Cambios guardados. Los especialistas los recibirán en su próxima descarga del paquete de trabajo.</div>}
+      {saved && (
+        <div className="ok-text">
+          Cambios guardados{applied ? ` y aplicados a ${applied.stations} estacion${applied.stations === 1 ? '' : 'es'}` : ''}. Los especialistas los recibirán al actualizar el paquete en la app.
+        </div>
+      )}
+      {saved && applied && applied.warnings.length > 0 && (
+        <div className="hint" style={{ color: 'var(--warn)' }}>
+          Se conservaron unidades con trabajo de campo: {applied.warnings.slice(0, 8).join(' · ')}{applied.warnings.length > 8 ? ` · y ${applied.warnings.length - 8} más` : ''}
+        </div>
+      )}
       <ErrorBox error={save.error} />
 
       <div className="section-title">General</div>

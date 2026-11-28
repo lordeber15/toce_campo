@@ -35,6 +35,7 @@ export function BrigadesPage() {
   const isAdmin = can(...ADMIN_ROLES);
   const qc = useQueryClient();
   const [editing, setEditing] = useState<Brigade | 'new' | null>(null);
+  const [unitsFor, setUnitsFor] = useState<Brigade | null>(null);
   const brigades = useQuery({ queryKey: ['brigades', project?.id], enabled: !!project, queryFn: () => api<Brigade[]>(`/projects/${project!.id}/brigades`) });
   const deactivate = useMutation({
     mutationFn: (id: string) => api(`/brigades/${id}`, { method: 'DELETE' }),
@@ -103,6 +104,7 @@ export function BrigadesPage() {
             {isAdmin && b.isActive && (
               <div style={{ display: 'flex', gap: 8, marginTop: 'auto' }}>
                 <button className="btn btn-sm" onClick={() => setEditing(b)}>Editar</button>
+                <button className="btn btn-sm" onClick={() => setUnitsFor(b)}>Unidades por método</button>
                 <button className="btn btn-sm btn-danger" onClick={() => confirm(`¿Desactivar ${b.name}?`) && deactivate.mutate(b.id)}>Desactivar</button>
               </div>
             )}
@@ -110,8 +112,89 @@ export function BrigadesPage() {
         ))}
       </div>
       {brigades.data && !brigades.data.length && <div className="card empty">Aún no hay brigadas en este proyecto.</div>}
+      {unitsFor && <BrigadeUnitsDialog brigade={unitsFor} onClose={() => setUnitsFor(null)} />}
       {editing && <BrigadeDialog projectId={project.id} brigade={editing === 'new' ? null : editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); qc.invalidateQueries({ queryKey: ['brigades'] }); qc.invalidateQueries({ queryKey: ['projects'] }); }} />}
     </>
+  );
+}
+
+type BrigadeMethod = {
+  id: string; code: string; name: string; specialtyName: string; defaultUnits: number;
+  stations: number; minUnits: number; maxUnits: number; unitsWithWork: number;
+};
+
+/** Cantidad de unidades por método solo en las estaciones de esta brigada (no toca a las demás brigadas). */
+function BrigadeUnitsDialog({ brigade, onClose }: { brigade: Brigade; onClose: () => void }) {
+  const qc = useQueryClient();
+  const list = useQuery({ queryKey: ['brigade-methods', brigade.id], queryFn: () => api<BrigadeMethod[]>(`/brigades/${brigade.id}/methods`) });
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [result, setResult] = useState<{ code: string; stations: number; warnings: string[] } | null>(null);
+  const apply = useMutation({
+    mutationFn: ({ m, units }: { m: BrigadeMethod; units: number }) =>
+      api<{ stations: number; warnings: string[] }>(`/brigades/${brigade.id}/methods/${m.id}/units`, { method: 'PUT', body: JSON.stringify({ units }) })
+        .then((r) => ({ ...r, code: m.code })),
+    onSuccess: (r) => {
+      setResult(r);
+      setDraft({});
+      qc.invalidateQueries({ queryKey: ['brigade-methods', brigade.id] });
+      qc.invalidateQueries({ queryKey: ['stations'] });
+    },
+  });
+  const current = (m: BrigadeMethod) => (m.minUnits === m.maxUnits ? String(m.minUnits) : `${m.minUnits}–${m.maxUnits}`);
+
+  return (
+    <Dialog wide title={`Unidades por método · ${brigade.name}`} onClose={onClose}
+      footer={<button type="button" className="btn" onClick={onClose}>Cerrar</button>}>
+      <p className="hint" style={{ marginTop: 0 }}>
+        Cambia la cantidad solo en las estaciones de esta brigada. No se borra nada: las unidades sobrantes quedan fuera de plan y
+        las que ya tienen trabajo de campo se conservan. Los especialistas lo verán al actualizar el paquete en la app.
+      </p>
+      <ErrorBox error={apply.error} />
+      {result && (
+        <div className="ok-text">
+          {result.code}: aplicado a {result.stations} estacion{result.stations === 1 ? '' : 'es'}.
+          {result.warnings.length > 0 && <span className="hint" style={{ color: 'var(--warn)' }}> Se conservaron unidades con trabajo: {result.warnings.slice(0, 6).join(' · ')}{result.warnings.length > 6 ? ' …' : ''}</span>}
+        </div>
+      )}
+      {list.isLoading && <p className="hint">Cargando…</p>}
+      {list.data && !list.data.length && <p className="hint">Esta brigada no tiene métodos con unidades programadas.</p>}
+      {!!list.data?.length && (
+        <div className="table-wrap"><table>
+          <thead>
+            <tr><th>Método</th><th>Estaciones</th><th>Unidades actuales</th><th>Con trabajo</th><th>Nueva cantidad</th><th /></tr>
+          </thead>
+          <tbody>
+            {list.data.map((m) => {
+              const v = draft[m.id] ?? '';
+              const n = Number(v);
+              const valid = v !== '' && Number.isInteger(n) && n >= 0 && n <= 500;
+              return (
+                <tr key={m.id}>
+                  <td><strong>{m.code}</strong> · {m.name}<div className="hint">{m.specialtyName}</div></td>
+                  <td>{m.stations}</td>
+                  <td>{current(m)}</td>
+                  <td>{m.unitsWithWork}</td>
+                  <td>
+                    <input
+                      type="number" min={0} max={500} className="input" style={{ width: 90 }} aria-label={`Nueva cantidad de ${m.code}`}
+                      placeholder={String(m.maxUnits)} value={v} onChange={(e) => setDraft({ ...draft, [m.id]: e.target.value })}
+                    />
+                  </td>
+                  <td>
+                    <button
+                      type="button" className="btn btn-sm btn-primary" disabled={!valid || apply.isPending}
+                      onClick={() => apply.mutate({ m, units: n })}
+                    >
+                      Aplicar
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table></div>
+      )}
+    </Dialog>
   );
 }
 
