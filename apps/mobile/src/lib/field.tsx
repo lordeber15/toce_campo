@@ -683,10 +683,15 @@ export function FieldProvider({ children, onScheduleChanged, packageVersion }: {
   }, [retentionQuery, reload]);
 
   const byUnit = useMemo(() => {
+    // Varias evaluaciones por unidad: se usa la más reciente (la que se está trabajando).
     const m = new Map<string, LocalExecution>();
+    const put = (key: string, e: LocalExecution) => {
+      const cur = m.get(key);
+      if (!cur || e.startedAt > cur.startedAt) m.set(key, e);
+    };
     for (const e of executions) {
-      if (e.newUnitClientId) m.set(e.newUnitClientId, e);
-      if (e.unitId) m.set(e.unitId, e);
+      if (e.newUnitClientId) put(e.newUnitClientId, e);
+      if (e.unitId) put(e.unitId, e);
     }
     return m;
   }, [executions]);

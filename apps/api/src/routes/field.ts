@@ -157,7 +157,12 @@ const fieldRoutes: FastifyPluginAsync = async (app) => {
             client_updated_at = EXCLUDED.client_updated_at, synced_at = now(), updated_at = now()
           RETURNING id`)).rows[0] as { id: string };
 
-        const unitStatus = UNIT_STATUS_BY_EXECUTION[e.status];
+        // Una unidad puede tener varias evaluaciones: queda completada si alguna lo está (una nueva
+        // evaluación no baja el avance); si no, toma el estado de la evaluación más reciente.
+        const agg = (await tx.execute(sql`
+          SELECT bool_or(status = 'completada') AS done, (array_agg(status ORDER BY started_at DESC, client_updated_at DESC))[1] AS latest
+          FROM executions WHERE sampling_unit_id = ${unit.id}`)).rows[0] as { done: boolean | null; latest: keyof typeof UNIT_STATUS_BY_EXECUTION | null } | undefined;
+        const unitStatus = agg?.done ? 'completada' : UNIT_STATUS_BY_EXECUTION[agg?.latest ?? e.status];
         await tx.execute(sql`UPDATE sampling_units SET status = ${unitStatus}, updated_at = now() WHERE id = ${unit.id}`);
         // La estación pasa a "en ejecución" con el primer registro.
         await tx.execute(sql`UPDATE stations SET status = 'en_ejecucion', updated_at = now() WHERE id = ${e.stationId} AND status = 'planificada'`);
